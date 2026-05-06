@@ -186,34 +186,33 @@ int dtls_setup_bio_pair(SSL *ssl, BIO **rbio_ptr, BIO **wbio_ptr) {
         return -1;
     }
     
-    BIO *internal_rbio = NULL;
-    BIO *internal_wbio = NULL;
+    // Create separate memory BIOs (not a pair!)
+    // rbio: SSL reads encrypted data from network from here
+    // wbio: SSL writes encrypted data to network to here
+    BIO *rbio = BIO_new(BIO_s_mem());
+    BIO *wbio = BIO_new(BIO_s_mem());
     
-    // Create BIO pair with 8KB buffers
-    // BIO_new_bio_pair creates two connected BIOs where:
-    // - Data written to bio1 can be read from bio2
-    // - Data written to bio2 can be read from bio1
-    if (BIO_new_bio_pair(&internal_rbio, 8192, &internal_wbio, 8192) != 1) {
-        log_error("Failed to create BIO pair");
+    if (!rbio || !wbio) {
+        log_error("Failed to create memory BIOs");
+        if (rbio) BIO_free(rbio);
+        if (wbio) BIO_free(wbio);
         ERR_print_errors_fp(stderr);
         return -1;
     }
     
-    // For DTLS with BIO pairs:
-    // - SSL reads encrypted data from internal_rbio (data we write to external_wbio)
-    // - SSL writes encrypted data to internal_wbio (data we read from external_rbio)
-    // So we need to swap them for the external interface
+    // Make BIOs non-blocking
+    BIO_set_mem_eof_return(rbio, -1);
+    BIO_set_mem_eof_return(wbio, -1);
     
     // Associate BIOs with SSL (SSL takes ownership)
-    SSL_set_bio(ssl, internal_rbio, internal_wbio);
+    SSL_set_bio(ssl, rbio, wbio);
     
-    // Return the OTHER ends of the pair for external use
-    // external rbio = internal_wbio (we read SSL's output from here)
-    // external wbio = internal_rbio (we write network input to here)
-    *rbio_ptr = internal_wbio;  // Read SSL output from here
-    *wbio_ptr = internal_rbio;  // Write network input to here
+    // Return the same BIOs for external use
+    // We write network data to rbio, read SSL output from wbio
+    *rbio_ptr = rbio;
+    *wbio_ptr = wbio;
     
-    log_debug("Setup BIO pair for SSL (swapped for external interface)");
+    log_debug("Setup memory BIOs for SSL");
     
     return 0;
 }
