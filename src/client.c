@@ -174,6 +174,13 @@ int main(int argc, char **argv) {
         int read = BIO_read(wbio, buffer, sizeof(buffer));
         log_info("Read %d bytes from wbio for initial handshake", read);
         
+        // Dump first few bytes to verify it's DTLS
+        if (read > 0) {
+            log_debug("First bytes: %02x %02x %02x %02x %02x",
+                     buffer[0], buffer[1], buffer[2],
+                     read > 3 ? buffer[3] : 0, read > 4 ? buffer[4] : 0);
+        }
+        
         if (read > 0) {
             io_op_t *op = io_op_alloc(OP_TYPE_UDP_SEND);
             if (op) {
