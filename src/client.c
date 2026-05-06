@@ -143,28 +143,49 @@ int main(int argc, char **argv) {
     log_info("Connecting to server...");
     
     // Start DTLS handshake
-    SSL_do_handshake(ssl);
+    log_info("Initiating DTLS handshake...");
+    int hs_ret = SSL_do_handshake(ssl);
+    log_debug("SSL_do_handshake returned: %d", hs_ret);
+    
     int pending = BIO_ctrl_pending(wbio);
+    log_debug("BIO pending bytes: %d", pending);
+    
     if (pending > 0) {
         uint8_t buffer[PACKET_BUFFER_SIZE];
         int read = BIO_read(wbio, buffer, sizeof(buffer));
+        log_info("Read %d bytes from wbio for initial handshake", read);
+        
         if (read > 0) {
             io_op_t *op = io_op_alloc(OP_TYPE_UDP_SEND);
             if (op) {
-                iouring_submit_udp_send(uring_ctx, op,
+                int submit_ret = iouring_submit_udp_send(uring_ctx, op,
                                       (struct sockaddr *)&server_addr,
                                       sizeof(server_addr), buffer, read);
+                log_info("Submitted initial ClientHello: %d bytes (ret=%d)", read, submit_ret);
+            } else {
+                log_error("Failed to allocate op for initial handshake send");
             }
         }
+    } else {
+        log_warn("No data to send after SSL_do_handshake");
     }
     
-    // Submit initial operations
+    // Submit initial UDP receive operations
+    log_info("Submitting initial UDP receive operations...");
+    int recv_submitted = 0;
     for (int i = 0; i < 4; i++) {
         io_op_t *op = io_op_alloc(OP_TYPE_UDP_RECV);
         if (op) {
-            iouring_submit_udp_recv(uring_ctx, op);
+            int ret = iouring_submit_udp_recv(uring_ctx, op);
+            if (ret == 0) {
+                recv_submitted++;
+            } else {
+                log_error("Failed to submit UDP recv %d", i);
+                io_op_free(op);
+            }
         }
     }
+    log_info("Submitted %d UDP receive operations", recv_submitted);
     
     log_info("Entering main loop...");
     
