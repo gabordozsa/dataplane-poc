@@ -314,7 +314,16 @@ int handle_udp_recv(struct io_uring_cqe *cqe, connection_table_t *conn_table,
     if (active_conn->state == CONN_STATE_HANDSHAKING) {
         // Feed data to SSL for handshake
         BIO_write(active_conn->rbio, op->buffer, packet_len);
-        process_dtls_handshake(active_conn, uring_ctx);
+        
+        // Continue handshake until complete or error
+        int hs_result;
+        do {
+            hs_result = process_dtls_handshake(active_conn, uring_ctx);
+        } while (hs_result == 1);  // Keep going while in progress
+        
+        if (hs_result < 0) {
+            log_error("Handshake failed for connection");
+        }
     } else if (active_conn->state == CONN_STATE_ESTABLISHED) {
         // Decrypt and write to TUN
         uint8_t decrypted[PACKET_BUFFER_SIZE];
