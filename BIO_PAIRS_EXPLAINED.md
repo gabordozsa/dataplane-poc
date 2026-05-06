@@ -143,18 +143,52 @@ Our Architecture:
 
 ## Code Example
 
-### Creating a BIO Pair
+### ⚠️ IMPORTANT: BIO Pair vs Separate BIOs
+
+**UPDATE (2026-05-06)**: We discovered that using `BIO_new_bio_pair()` creates a **feedback loop** that causes handshake failures. The correct approach is to use **separate memory BIOs**.
+
+### ❌ WRONG: Using BIO Pair (Creates Feedback Loop)
 
 ```c
-// Create the BIO pair
-BIO *rbio = NULL;  // Read BIO (network → SSL)
-BIO *wbio = NULL;  // Write BIO (SSL → network)
+// ❌ DON'T DO THIS - Creates feedback loop!
+BIO *rbio = NULL;
+BIO *wbio = NULL;
 
-// Create connected pair with 8KB buffers each
+// This creates two CONNECTED BIOs where:
+// - Data written to rbio can be read from wbio
+// - Data written to wbio can be read from rbio
 int ret = BIO_new_bio_pair(&rbio, 8192, &wbio, 8192);
-if (ret != 1) {
+
+SSL_set_bio(ssl, rbio, wbio);
+
+// PROBLEM: SSL writes to wbio → feeds back into rbio → SSL reads its own output!
+// Result: SSL_ERROR_SSL with "unexpected message" error
+```
+
+**Why this fails**:
+1. SSL writes encrypted data to `wbio`
+2. Because they're a pair, this data appears in `rbio`
+3. SSL tries to read from `rbio` and gets its own output
+4. SSL state machine gets confused: "unexpected message"
+5. Handshake generates Alert (0x15) instead of ClientHello (0x16)
+
+### ✅ CORRECT: Using Separate Memory BIOs
+
+```c
+// ✅ DO THIS - Use separate memory BIOs
+BIO *rbio = BIO_new(BIO_s_mem());  // Read BIO (network → SSL)
+BIO *wbio = BIO_new(BIO_s_mem());  // Write BIO (SSL → network)
+
+if (!rbio || !wbio) {
     // Error handling
+    if (rbio) BIO_free(rbio);
+    if (wbio) BIO_free(wbio);
+    return -1;
 }
+
+// Make BIOs non-blocking (return -1 on EOF instead of 0)
+BIO_set_mem_eof_return(rbio, -1);
+BIO_set_mem_eof_return(wbio, -1);
 
 // Create SSL object
 SSL *ssl = SSL_new(ssl_ctx);
@@ -163,9 +197,17 @@ SSL *ssl = SSL_new(ssl_ctx);
 // SSL takes ownership - don't free them manually!
 SSL_set_bio(ssl, rbio, wbio);
 
-// Set SSL to server mode
-SSL_set_accept_state(ssl);
+// IMPORTANT: Set SSL state AFTER attaching BIOs!
+SSL_set_accept_state(ssl);  // For server
+// or
+SSL_set_connect_state(ssl); // For client
 ```
+
+**Why this works**:
+1. `rbio` and `wbio` are **independent** memory buffers
+2. SSL writes to `wbio` → we read from `wbio` → send to network
+3. Network → we write to `rbio` → SSL reads from `rbio`
+4. No feedback loop, clean unidirectional data flow
 
 ### Receiving and Decrypting
 
@@ -243,6 +285,76 @@ if (pending > 0) {
 1. **Decoupling**: Separates network I/O from SSL processing
 2. **Asynchronous**: No blocking - we control when data flows
 3. **Memory-based**: Fast, no system calls within SSL
+
+## Critical Issues and Fixes (Updated 2026-05-06)
+
+### Issue 1: BIO Pair Feedback Loop (CRITICAL)
+
+**Problem**: Using `BIO_new_bio_pair()` creates connected BIOs that cause SSL's output to feed back into its input.
+
+**Symptoms**:
+- `SSL_do_handshake()` returns -1 with `SSL_ERROR_SSL`
+- Error message: "ossl_statem_client_read_transition:unexpected message"
+- Generates 15-byte Alert (0x15) instead of ClientHello (0x16)
+- Handshake never completes
+
+**Root Cause**: 
+```
+BIO Pair Creates Feedback Loop:
+SSL writes to wbio → Data appears in rbio → SSL reads its own output!
+```
+
+**Solution**: Use separate `BIO_new(BIO_s_mem())` instances instead of `BIO_new_bio_pair()`. See the corrected code example above.
+
+### Issue 2: SSL State Set Before BIO Attachment
+
+**Problem**: Calling `SSL_set_connect_state()` or `SSL_set_accept_state()` before attaching BIOs puts SSL in an inconsistent state.
+
+**Symptoms**:
+- SSL expects to perform I/O but has no I/O mechanism configured
+- Handshake fails with protocol errors
+
+**Solution**: Always call `SSL_set_bio()` FIRST, then set the SSL state:
+```c
+// ✅ CORRECT ORDER
+SSL_set_bio(ssl, rbio, wbio);           // 1. Attach BIOs first
+SSL_set_connect_state(ssl);             // 2. Then set state
+
+// ❌ WRONG ORDER
+SSL_set_connect_state(ssl);             // 1. State set too early
+SSL_set_bio(ssl, rbio, wbio);           // 2. BIOs attached after
+```
+
+### Issue 3: Server Not Sending Final Handshake Messages
+
+**Problem**: When `SSL_do_handshake()` returns 1 (success), the server marks the connection as established but doesn't check if SSL generated final messages (ChangeCipherSpec + Finished) that need to be sent.
+
+**Symptoms**:
+- Server logs "handshake completed"
+- Client stuck waiting with `SSL_ERROR_WANT_READ`
+- Client never receives server's final messages
+
+**Solution**: After handshake completion, always check wbio for pending data:
+```c
+if (SSL_do_handshake(ssl) == 1) {
+    // Handshake complete!
+    conn->state = CONN_STATE_ESTABLISHED;
+    
+    // ✅ Check if SSL has final messages to send
+    int pending = BIO_ctrl_pending(wbio);
+    if (pending > 0) {
+        char buffer[2048];
+        int read = BIO_read(wbio, buffer, sizeof(buffer));
+        if (read > 0) {
+            // Send these final messages!
+            send_to_network(buffer, read);
+        }
+    }
+}
+```
+
+**See DTLS-HANDSHAKE-FIXES.md for complete details on these fixes.**
+
 4. **Flexible**: Works with any async I/O system (io-uring, epoll, etc.)
 
 ## Common Pitfalls
