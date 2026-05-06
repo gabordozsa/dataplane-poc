@@ -32,6 +32,7 @@ int process_dtls_handshake(connection_t *conn, iouring_ctx_t *uring_ctx) {
                     iouring_submit_udp_send(uring_ctx, op,
                                           (struct sockaddr *)&conn->addr,
                                           conn->addr_len, buffer, read);
+                    log_debug("Sent handshake message: %d bytes", read);
                 }
             }
         }
@@ -48,9 +49,19 @@ int process_dtls_handshake(connection_t *conn, iouring_ctx_t *uring_ctx) {
                     iouring_submit_udp_send(uring_ctx, op,
                                           (struct sockaddr *)&conn->addr,
                                           conn->addr_len, buffer, read);
+                    log_debug("Sent handshake message: %d bytes", read);
                 }
             }
         }
+        
+        // After sending, try handshake again to see if it completes
+        ret = SSL_do_handshake(conn->ssl);
+        if (ret == 1) {
+            conn->state = CONN_STATE_ESTABLISHED;
+            log_info("DTLS handshake completed");
+            return 0;
+        }
+        
         return 1;  // In progress
     } else {
         log_error("DTLS handshake failed: %s", dtls_get_error_string(conn->ssl, ret));
