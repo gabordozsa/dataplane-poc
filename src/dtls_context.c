@@ -168,14 +168,10 @@ SSL* dtls_create_ssl(dtls_ctx_t *dtls_ctx) {
     // Set MTU to avoid fragmentation
     SSL_set_mtu(ssl, 1400);
     
-    // Set mode for server or client
-    if (dtls_ctx->is_server) {
-        SSL_set_accept_state(ssl);
-    } else {
-        SSL_set_connect_state(ssl);
-    }
+    // NOTE: Do NOT call SSL_set_connect_state() or SSL_set_accept_state() here
+    // It should be called AFTER BIOs are set up
     
-    log_debug("Created SSL object");
+    log_debug("Created SSL object (state will be set after BIO setup)");
     
     return ssl;
 }
@@ -206,6 +202,21 @@ int dtls_setup_bio_pair(SSL *ssl, BIO **rbio_ptr, BIO **wbio_ptr) {
     
     // Associate BIOs with SSL (SSL takes ownership)
     SSL_set_bio(ssl, rbio, wbio);
+    
+    // NOW set the SSL state after BIOs are attached
+    // Check if this is a server or client based on SSL_CTX
+    SSL_CTX *ctx = SSL_get_SSL_CTX(ssl);
+    const SSL_METHOD *method = SSL_CTX_get_ssl_method(ctx);
+    
+    // Determine if server or client based on method
+    // For DTLS, check if it's a server or client method
+    if (SSL_is_server(ssl)) {
+        SSL_set_accept_state(ssl);
+        log_debug("Set SSL to accept state (server)");
+    } else {
+        SSL_set_connect_state(ssl);
+        log_debug("Set SSL to connect state (client)");
+    }
     
     // Return the same BIOs for external use
     // We write network data to rbio, read SSL output from wbio
