@@ -145,11 +145,20 @@ int main(int argc, char **argv) {
     // Start DTLS handshake
     log_info("Initiating DTLS handshake...");
     
+    // Clear any previous errors
+    ERR_clear_error();
+    
     // Call SSL_do_handshake to initiate the handshake
     int hs_ret = SSL_do_handshake(ssl);
     int ssl_err = SSL_get_error(ssl, hs_ret);
     log_debug("SSL_do_handshake returned: %d, SSL error: %d (%s)",
               hs_ret, ssl_err, dtls_get_error_string(ssl, hs_ret));
+    
+    // If there's an SSL error, print the error queue
+    if (ssl_err == SSL_ERROR_SSL) {
+        log_error("SSL protocol error occurred:");
+        ERR_print_errors_fp(stderr);
+    }
     
     // For DTLS client, we expect SSL_ERROR_WANT_WRITE or SSL_ERROR_WANT_READ
     // Check if SSL generated any data to send
