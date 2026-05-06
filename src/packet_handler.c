@@ -18,10 +18,12 @@ int process_dtls_handshake(connection_t *conn, iouring_ctx_t *uring_ctx) {
     }
     
     int err = SSL_get_error(conn->ssl, ret);
+    log_debug("process_dtls_handshake: ret=%d, err=%d (%s)", ret, err, dtls_get_error_string(conn->ssl, ret));
     
     if (err == SSL_ERROR_WANT_READ) {
         // Need more data - check if SSL wants to send anything
         int pending = BIO_ctrl_pending(conn->wbio);
+        log_debug("WANT_READ: wbio pending=%d", pending);
         if (pending > 0) {
             uint8_t buffer[PACKET_BUFFER_SIZE];
             int read = BIO_read(conn->wbio, buffer, sizeof(buffer));
@@ -34,6 +36,14 @@ int process_dtls_handshake(connection_t *conn, iouring_ctx_t *uring_ctx) {
                                           conn->addr_len, buffer, read);
                     log_debug("Sent handshake message: %d bytes", read);
                 }
+            }
+            
+            // After sending, try handshake again
+            ret = SSL_do_handshake(conn->ssl);
+            if (ret == 1) {
+                conn->state = CONN_STATE_ESTABLISHED;
+                log_info("DTLS handshake completed (after WANT_READ send)");
+                return 0;
             }
         }
         return 1;  // In progress
