@@ -38,8 +38,12 @@ int process_dtls_handshake(connection_t *conn, iouring_ctx_t *uring_ctx) {
                 }
             }
             
-            // After sending, try handshake again
+            // After sending, try handshake again to see if complete
+            log_debug("Retrying SSL_do_handshake after send...");
             ret = SSL_do_handshake(conn->ssl);
+            err = SSL_get_error(conn->ssl, ret);
+            log_debug("Retry result: ret=%d, err=%d", ret, err);
+            
             if (ret == 1) {
                 conn->state = CONN_STATE_ESTABLISHED;
                 log_info("DTLS handshake completed (after WANT_READ send)");
