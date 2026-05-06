@@ -11,9 +11,26 @@ int process_dtls_handshake(connection_t *conn, iouring_ctx_t *uring_ctx) {
     int ret = SSL_do_handshake(conn->ssl);
     
     if (ret == 1) {
-        // Handshake complete
+        // Handshake complete - but check if we need to send final messages
         conn->state = CONN_STATE_ESTABLISHED;
         log_info("DTLS handshake completed");
+        
+        // Check if SSL has any final messages to send (e.g., server's Finished)
+        int pending = BIO_ctrl_pending(conn->wbio);
+        if (pending > 0) {
+            uint8_t buffer[PACKET_BUFFER_SIZE];
+            int read = BIO_read(conn->wbio, buffer, sizeof(buffer));
+            if (read > 0) {
+                io_op_t *op = io_op_alloc(OP_TYPE_UDP_SEND);
+                if (op) {
+                    iouring_submit_udp_send(uring_ctx, op,
+                                          (struct sockaddr *)&conn->addr,
+                                          conn->addr_len, buffer, read);
+                    log_debug("Sent final handshake message after completion: %d bytes", read);
+                }
+            }
+        }
+        
         return 0;
     }
     
