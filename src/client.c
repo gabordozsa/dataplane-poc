@@ -174,11 +174,26 @@ int main(int argc, char **argv) {
         int read = BIO_read(wbio, buffer, sizeof(buffer));
         log_info("Read %d bytes from wbio for initial handshake", read);
         
-        // Dump first few bytes to verify it's DTLS
+        // Dump all bytes to see what's being sent
         if (read > 0) {
-            log_debug("First bytes: %02x %02x %02x %02x %02x",
-                     buffer[0], buffer[1], buffer[2],
-                     read > 3 ? buffer[3] : 0, read > 4 ? buffer[4] : 0);
+            char hex_str[256] = {0};
+            int offset = 0;
+            for (int i = 0; i < read && i < 20; i++) {
+                offset += snprintf(hex_str + offset, sizeof(hex_str) - offset, "%02x ", buffer[i]);
+            }
+            log_debug("All %d bytes: %s", read, hex_str);
+            
+            // Decode the message type
+            if (buffer[0] == 0x16) {
+                log_info("Message type: Handshake (0x16) - GOOD!");
+            } else if (buffer[0] == 0x15) {
+                log_error("Message type: Alert (0x15) - SSL ERROR!");
+                if (read >= 5) {
+                    log_error("Alert level: %d, description: %d", buffer[3], buffer[4]);
+                }
+            } else {
+                log_warn("Message type: Unknown (0x%02x)", buffer[0]);
+            }
         }
         
         if (read > 0) {
