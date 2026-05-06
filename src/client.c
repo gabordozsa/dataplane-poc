@@ -144,11 +144,21 @@ int main(int argc, char **argv) {
     
     // Start DTLS handshake
     log_info("Initiating DTLS handshake...");
-    int hs_ret = SSL_do_handshake(ssl);
-    log_debug("SSL_do_handshake returned: %d", hs_ret);
     
+    // Call SSL_do_handshake to initiate the handshake
+    int hs_ret = SSL_do_handshake(ssl);
+    int ssl_err = SSL_get_error(ssl, hs_ret);
+    log_debug("SSL_do_handshake returned: %d, SSL error: %d (%s)",
+              hs_ret, ssl_err, dtls_get_error_string(ssl, hs_ret));
+    
+    // For DTLS client, we expect SSL_ERROR_WANT_WRITE or SSL_ERROR_WANT_READ
+    // Check if SSL generated any data to send
     int pending = BIO_ctrl_pending(wbio);
-    log_debug("BIO pending bytes: %d", pending);
+    log_debug("BIO wbio pending bytes: %d", pending);
+    
+    // Also check rbio
+    int rbio_pending = BIO_ctrl_pending(rbio);
+    log_debug("BIO rbio pending bytes: %d", rbio_pending);
     
     if (pending > 0) {
         uint8_t buffer[PACKET_BUFFER_SIZE];
@@ -167,7 +177,18 @@ int main(int argc, char **argv) {
             }
         }
     } else {
-        log_warn("No data to send after SSL_do_handshake");
+        log_error("No data to send after SSL_do_handshake - handshake not initiated!");
+        log_error("This usually means the BIO pair is not set up correctly");
+        
+        // Try to diagnose the issue
+        log_debug("SSL state: %s", SSL_state_string_long(ssl));
+        log_debug("SSL is_init_finished: %d", SSL_is_init_finished(ssl));
+        
+        // Check if BIOs are properly connected
+        BIO *ssl_rbio = SSL_get_rbio(ssl);
+        BIO *ssl_wbio = SSL_get_wbio(ssl);
+        log_debug("SSL rbio: %p, wbio: %p", (void*)ssl_rbio, (void*)ssl_wbio);
+        log_debug("Our rbio: %p, wbio: %p", (void*)rbio, (void*)wbio);
     }
     
     // Submit initial UDP receive operations
