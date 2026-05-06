@@ -186,24 +186,34 @@ int dtls_setup_bio_pair(SSL *ssl, BIO **rbio_ptr, BIO **wbio_ptr) {
         return -1;
     }
     
-    BIO *rbio = NULL;
-    BIO *wbio = NULL;
+    BIO *internal_rbio = NULL;
+    BIO *internal_wbio = NULL;
     
     // Create BIO pair with 8KB buffers
-    if (BIO_new_bio_pair(&rbio, 8192, &wbio, 8192) != 1) {
+    // BIO_new_bio_pair creates two connected BIOs where:
+    // - Data written to bio1 can be read from bio2
+    // - Data written to bio2 can be read from bio1
+    if (BIO_new_bio_pair(&internal_rbio, 8192, &internal_wbio, 8192) != 1) {
         log_error("Failed to create BIO pair");
         ERR_print_errors_fp(stderr);
         return -1;
     }
     
-    // Associate BIOs with SSL
-    // SSL takes ownership of the BIOs
-    SSL_set_bio(ssl, rbio, wbio);
+    // For DTLS with BIO pairs:
+    // - SSL reads encrypted data from internal_rbio (data we write to external_wbio)
+    // - SSL writes encrypted data to internal_wbio (data we read from external_rbio)
+    // So we need to swap them for the external interface
     
-    *rbio_ptr = rbio;
-    *wbio_ptr = wbio;
+    // Associate BIOs with SSL (SSL takes ownership)
+    SSL_set_bio(ssl, internal_rbio, internal_wbio);
     
-    log_debug("Setup BIO pair for SSL");
+    // Return the OTHER ends of the pair for external use
+    // external rbio = internal_wbio (we read SSL's output from here)
+    // external wbio = internal_rbio (we write network input to here)
+    *rbio_ptr = internal_wbio;  // Read SSL output from here
+    *wbio_ptr = internal_rbio;  // Write network input to here
+    
+    log_debug("Setup BIO pair for SSL (swapped for external interface)");
     
     return 0;
 }
