@@ -315,14 +315,14 @@ int handle_udp_recv(struct io_uring_cqe *cqe, connection_table_t *conn_table,
         // Feed data to SSL for handshake
         BIO_write(active_conn->rbio, op->buffer, packet_len);
         
-        // Continue handshake until complete or error
-        int hs_result;
-        do {
-            hs_result = process_dtls_handshake(active_conn, uring_ctx);
-        } while (hs_result == 1);  // Keep going while in progress
+        // Process handshake - call once, not in a loop
+        // DTLS handshake is asynchronous and may need multiple packets
+        int hs_result = process_dtls_handshake(active_conn, uring_ctx);
         
         if (hs_result < 0) {
             log_error("Handshake failed for connection");
+        } else if (hs_result == 0) {
+            log_info("Handshake completed successfully");
         }
     } else if (active_conn->state == CONN_STATE_ESTABLISHED) {
         // Decrypt and write to TUN
