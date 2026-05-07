@@ -130,6 +130,27 @@ int tun_device_configure(tun_device_t *tun, const char *ip,
     return 0;
 }
 
+static int tun_device_disable_ipv6(const char *ifname) {
+    char path[256];
+    snprintf(path, sizeof(path), "/proc/sys/net/ipv6/conf/%s/disable_ipv6", ifname);
+    
+    FILE *f = fopen(path, "w");
+    if (!f) {
+        log_warn("Failed to open %s: %s (IPv6 may still be enabled)", path, strerror(errno));
+        return -1;
+    }
+    
+    if (fprintf(f, "1\n") < 0) {
+        log_warn("Failed to write to %s: %s", path, strerror(errno));
+        fclose(f);
+        return -1;
+    }
+    
+    fclose(f);
+    log_info("Disabled IPv6 on interface %s", ifname);
+    return 0;
+}
+
 int tun_device_up(tun_device_t *tun) {
     if (!tun) {
         log_error("Invalid TUN device");
@@ -167,6 +188,9 @@ int tun_device_up(tun_device_t *tun) {
     close(sockfd);
     
     log_info("Brought TUN device %s up", tun->name);
+    
+    // Disable IPv6 on the interface
+    tun_device_disable_ipv6(tun->name);
     
     return 0;
 }
