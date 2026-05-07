@@ -8,96 +8,49 @@ int process_dtls_handshake(connection_t *conn, iouring_ctx_t *uring_ctx) {
         return -1;
     }
     
-    int ret = SSL_do_handshake(conn->ssl);
+    // Clear any previous errors
+    ERR_clear_error();
     
-    if (ret == 1) {
-        // Handshake complete - but check if we need to send final messages
-        conn->state = CONN_STATE_ESTABLISHED;
-        log_info("DTLS handshake completed");
-        
-        // Check if SSL has any final messages to send (e.g., server's Finished)
-        int pending = BIO_ctrl_pending(conn->wbio);
-        if (pending > 0) {
-            uint8_t buffer[PACKET_BUFFER_SIZE];
-            int read = BIO_read(conn->wbio, buffer, sizeof(buffer));
-            if (read > 0) {
-                io_op_t *op = io_op_alloc(OP_TYPE_UDP_SEND);
-                if (op) {
-                    iouring_submit_udp_send(uring_ctx, op,
-                                          (struct sockaddr *)&conn->addr,
-                                          conn->addr_len, buffer, read);
-                    log_debug("Sent final handshake message after completion: %d bytes", read);
-                }
+    int ret = SSL_do_handshake(conn->ssl);
+    int err = SSL_get_error(conn->ssl, ret);
+    
+    log_debug("process_dtls_handshake: ret=%d, err=%d (%s)", ret, err, dtls_get_error_string(conn->ssl, ret));
+    
+    // Check for pending output FIRST, before checking return value
+    // SSL may have generated response data even if handshake isn't complete
+    int pending = BIO_ctrl_pending(conn->wbio);
+    log_debug("wbio pending after SSL_do_handshake: %d bytes", pending);
+    
+    if (pending > 0) {
+        uint8_t buffer[PACKET_BUFFER_SIZE];
+        int read = BIO_read(conn->wbio, buffer, sizeof(buffer));
+        if (read > 0) {
+            io_op_t *op = io_op_alloc(OP_TYPE_UDP_SEND);
+            if (op) {
+                iouring_submit_udp_send(uring_ctx, op,
+                                      (struct sockaddr *)&conn->addr,
+                                      conn->addr_len, buffer, read);
+                log_debug("Sent handshake response: %d bytes", read);
             }
         }
-        
+    }
+    
+    if (ret == 1) {
+        // Handshake complete
+        conn->state = CONN_STATE_ESTABLISHED;
+        log_info("DTLS handshake completed");
         return 0;
     }
     
-    int err = SSL_get_error(conn->ssl, ret);
-    log_debug("process_dtls_handshake: ret=%d, err=%d (%s)", ret, err, dtls_get_error_string(conn->ssl, ret));
-    
-    if (err == SSL_ERROR_WANT_READ) {
-        // Need more data - check if SSL wants to send anything
-        int pending = BIO_ctrl_pending(conn->wbio);
-        log_debug("WANT_READ: wbio pending=%d", pending);
-        if (pending > 0) {
-            uint8_t buffer[PACKET_BUFFER_SIZE];
-            int read = BIO_read(conn->wbio, buffer, sizeof(buffer));
-            if (read > 0) {
-                // Send handshake message
-                io_op_t *op = io_op_alloc(OP_TYPE_UDP_SEND);
-                if (op) {
-                    iouring_submit_udp_send(uring_ctx, op,
-                                          (struct sockaddr *)&conn->addr,
-                                          conn->addr_len, buffer, read);
-                    log_debug("Sent handshake message: %d bytes", read);
-                }
-            }
-            
-            // After sending, try handshake again to see if complete
-            log_debug("Retrying SSL_do_handshake after send...");
-            ret = SSL_do_handshake(conn->ssl);
-            err = SSL_get_error(conn->ssl, ret);
-            log_debug("Retry result: ret=%d, err=%d", ret, err);
-            
-            if (ret == 1) {
-                conn->state = CONN_STATE_ESTABLISHED;
-                log_info("DTLS handshake completed (after WANT_READ send)");
-                return 0;
-            }
-        }
-        return 1;  // In progress
-    } else if (err == SSL_ERROR_WANT_WRITE) {
-        // Need to send data
-        int pending = BIO_ctrl_pending(conn->wbio);
-        if (pending > 0) {
-            uint8_t buffer[PACKET_BUFFER_SIZE];
-            int read = BIO_read(conn->wbio, buffer, sizeof(buffer));
-            if (read > 0) {
-                io_op_t *op = io_op_alloc(OP_TYPE_UDP_SEND);
-                if (op) {
-                    iouring_submit_udp_send(uring_ctx, op,
-                                          (struct sockaddr *)&conn->addr,
-                                          conn->addr_len, buffer, read);
-                    log_debug("Sent handshake message: %d bytes", read);
-                }
-            }
-        }
-        
-        // After sending, try handshake again to see if it completes
-        ret = SSL_do_handshake(conn->ssl);
-        if (ret == 1) {
-            conn->state = CONN_STATE_ESTABLISHED;
-            log_info("DTLS handshake completed");
-            return 0;
-        }
-        
-        return 1;  // In progress
-    } else {
-        log_error("DTLS handshake failed: %s", dtls_get_error_string(conn->ssl, ret));
-        return -1;
+    // Handshake in progress
+    if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+        return 1;  // In progress, wait for more data or send completion
     }
+    
+    // Error occurred
+    log_error("DTLS handshake failed: %s", dtls_get_error_string(conn->ssl, ret));
+    ERR_print_errors_fp(stderr);
+    return -1;
 }
 
 int dtls_encrypt_and_send(connection_t *conn, const uint8_t *data, size_t len,
