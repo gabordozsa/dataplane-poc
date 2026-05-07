@@ -180,9 +180,11 @@ bool validate_ip_packet(const uint8_t *packet, size_t len) {
             return false;  // Too short
         }
         
-        uint8_t ihl = iph->version_ihl & 0x0F;
+        // Extract IHL (Internet Header Length) from iph
+        // ihl is in 32-bit words, so multiply by 4 to get bytes
+        uint8_t ihl = iph->ihl;
         if (ihl < 5) {
-            return false;  // Invalid header length
+            return false;  // Invalid header length (minimum 20 bytes = 5 words)
         }
         
         return true;
@@ -234,6 +236,7 @@ void print_ip_packet_info(const uint8_t *packet, size_t len) {
     } else {
         log_debug("Unknown IP version: %d", version);
     }
+}
 
 uint32_t get_ipv4_destination(const uint8_t *packet, size_t len) {
     if (len < 20) {
@@ -261,7 +264,6 @@ uint32_t get_ipv4_source(const uint8_t *packet, size_t len) {
     
     struct iphdr *iph = (struct iphdr *)packet;
     return iph->saddr;  // Already in network byte order
-}
 }
 
 // Made with Bob
