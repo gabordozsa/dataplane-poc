@@ -30,7 +30,7 @@ int main(int argc, char **argv) {
     uint16_t port = atoi(argv[1]);
     const char *cert_file = argv[2];
     const char *key_file = argv[3];
-    const char *tun_ip = (argc > 4) ? argv[4] : "10.8.0.254";
+    const char *tun_ip = (argc > 4) ? argv[4] : "10.9.0.254";
     
     // Set up signal handlers
     signal(SIGINT, signal_handler);
