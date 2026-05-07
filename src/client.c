@@ -137,6 +137,7 @@ int main(int argc, char **argv) {
     conn.wbio = wbio;
     addr_copy(&conn.addr, (struct sockaddr *)&server_addr, sizeof(server_addr));
     conn.addr_len = sizeof(server_addr);
+    conn.tunnel_ip = 0;  // Will be set from server if needed
     conn.state = CONN_STATE_HANDSHAKING;
     conn.last_activity = time(NULL);
     
