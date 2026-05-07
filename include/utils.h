@@ -33,9 +33,11 @@ uint32_t addr_hash(const struct sockaddr *addr, size_t bucket_count);
 int addr_compare(const struct sockaddr *a, const struct sockaddr *b);
 void addr_copy(struct sockaddr_storage *dst, const struct sockaddr *src, socklen_t len);
 
-// IP packet validation
+// IP packet validation and parsing
 bool validate_ip_packet(const uint8_t *packet, size_t len);
 void print_ip_packet_info(const uint8_t *packet, size_t len);
+uint32_t get_ipv4_destination(const uint8_t *packet, size_t len);
+uint32_t get_ipv4_source(const uint8_t *packet, size_t len);
 
 // Helper macros
 #define MIN(a, b) ((a) < (b) ? (a) : (b))

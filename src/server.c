@@ -10,6 +10,7 @@
 #include <string.h>
 #include <signal.h>
 #include <unistd.h>
+#include <arpa/inet.h>
 
 static volatile int running = 1;
 
@@ -157,12 +158,59 @@ int main(int argc, char **argv) {
         // Process based on operation type
         switch (op->op_type) {
             case OP_TYPE_TUN_READ:
-                // For server, we need to route to appropriate client
-                // For now, just log and resubmit
+                // Server reads from TUN and routes to appropriate client
                 if (cqe->res > 0) {
-                    log_debug("Read %d bytes from TUN (server)", cqe->res);
-                    // TODO: Route to appropriate client based on destination IP
+                    int packet_len = cqe->res;
+                    log_debug("Read %d bytes from TUN (server)", packet_len);
+                    
+                    // Validate IP packet
+                    if (validate_ip_packet(op->buffer, packet_len)) {
+                        print_ip_packet_info(op->buffer, packet_len);
+                        
+                        // Extract destination IP
+                        uint32_t dest_ip = get_ipv4_destination(op->buffer, packet_len);
+                        
+                        if (dest_ip != 0) {
+                            // Find connection by tunnel IP
+                            connection_t *target_conn = connection_find_by_tunnel_ip(conn_table, dest_ip);
+                            
+                            if (target_conn) {
+                                // Route to specific client
+                                dtls_encrypt_and_send(target_conn, op->buffer, packet_len, uring_ctx);
+                                
+                                struct in_addr addr;
+                                addr.s_addr = dest_ip;
+                                char ip_str[INET_ADDRSTRLEN];
+                                inet_ntop(AF_INET, &addr, ip_str, sizeof(ip_str));
+                                log_debug("Routed packet to client with tunnel IP %s", ip_str);
+                            } else {
+                                struct in_addr addr;
+                                addr.s_addr = dest_ip;
+                                char ip_str[INET_ADDRSTRLEN];
+                                inet_ntop(AF_INET, &addr, ip_str, sizeof(ip_str));
+                                log_debug("No client found for tunnel IP %s", ip_str);
+                            }
+                        } else {
+                            // Not IPv4 or couldn't extract IP, broadcast to all
+                            log_debug("Non-IPv4 packet, broadcasting to all clients");
+                            int sent_count = 0;
+                            for (size_t i = 0; i < conn_table->bucket_count; i++) {
+                                connection_t *conn = conn_table->buckets[i];
+                                while (conn) {
+                                    if (conn->state == CONN_STATE_ESTABLISHED) {
+                                        dtls_encrypt_and_send(conn, op->buffer, packet_len, uring_ctx);
+                                        sent_count++;
+                                    }
+                                    conn = conn->next;
+                                }
+                            }
+                            log_debug("Broadcast packet to %d client(s)", sent_count);
+                        }
+                    } else {
+                        log_warn("Invalid IP packet from TUN (server)");
+                    }
                 }
+                
                 io_op_free(op);
                 
                 // Resubmit TUN read

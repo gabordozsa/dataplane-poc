@@ -19,8 +19,10 @@ typedef struct connection {
     BIO *rbio;  // Read BIO (network → SSL)
     BIO *wbio;  // Write BIO (SSL → network)
     
-    struct sockaddr_storage addr;
+    struct sockaddr_storage addr;  // UDP address (IP:port)
     socklen_t addr_len;
+    
+    uint32_t tunnel_ip;  // Client's VPN tunnel IP (network byte order)
     
     conn_state_t state;
     time_t last_activity;
@@ -45,12 +47,27 @@ typedef struct {
 connection_table_t* connection_table_init(size_t bucket_count, size_t max_connections);
 
 /**
- * Find connection by address
+ * Find connection by UDP address
  * @param table Connection table
- * @param addr Client address
+ * @param addr Client UDP address
  * @return Pointer to connection_t if found, NULL otherwise
  */
 connection_t* connection_find(connection_table_t *table, const struct sockaddr *addr);
+
+/**
+ * Find connection by tunnel IP address
+ * @param table Connection table
+ * @param tunnel_ip Tunnel IP address (network byte order)
+ * @return Pointer to connection_t if found, NULL otherwise
+ */
+connection_t* connection_find_by_tunnel_ip(connection_table_t *table, uint32_t tunnel_ip);
+
+/**
+ * Set tunnel IP for a connection
+ * @param conn Connection
+ * @param tunnel_ip Tunnel IP address (network byte order)
+ */
+void connection_set_tunnel_ip(connection_t *conn, uint32_t tunnel_ip);
 
 /**
  * Create new connection

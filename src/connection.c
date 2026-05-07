@@ -2,6 +2,7 @@
 #include "utils.h"
 #include <stdlib.h>
 #include <string.h>
+#include <arpa/inet.h>
 
 connection_table_t* connection_table_init(size_t bucket_count, size_t max_connections) {
     connection_table_t *table = calloc(1, sizeof(connection_table_t));
@@ -43,6 +44,39 @@ connection_t* connection_find(connection_table_t *table, const struct sockaddr *
     }
     
     return NULL;
+}
+
+connection_t* connection_find_by_tunnel_ip(connection_table_t *table, uint32_t tunnel_ip) {
+    if (!table || tunnel_ip == 0) {
+        return NULL;
+    }
+    
+    // Linear search through all connections
+    // In production, you'd want a separate hash table for tunnel IPs
+    for (size_t i = 0; i < table->bucket_count; i++) {
+        connection_t *conn = table->buckets[i];
+        while (conn) {
+            if (conn->tunnel_ip == tunnel_ip && conn->state == CONN_STATE_ESTABLISHED) {
+                return conn;
+            }
+            conn = conn->next;
+        }
+    }
+    
+    return NULL;
+}
+
+void connection_set_tunnel_ip(connection_t *conn, uint32_t tunnel_ip) {
+    if (conn) {
+        conn->tunnel_ip = tunnel_ip;
+        
+        // Log the tunnel IP in human-readable format
+        struct in_addr addr;
+        addr.s_addr = tunnel_ip;
+        char ip_str[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &addr, ip_str, sizeof(ip_str));
+        log_debug("Set tunnel IP for connection: %s", ip_str);
+    }
 }
 
 connection_t* connection_create(connection_table_t *table, SSL *ssl,

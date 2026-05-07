@@ -374,6 +374,13 @@ int handle_udp_recv(struct io_uring_cqe *cqe, connection_table_t *conn_table,
                                                   sizeof(decrypted), uring_ctx);
         
         if (decrypted_len > 0) {
+            // Learn client's tunnel IP from source address
+            uint32_t src_ip = get_ipv4_source(decrypted, decrypted_len);
+            if (src_ip != 0 && active_conn->tunnel_ip == 0) {
+                // First packet from this client, learn its tunnel IP
+                connection_set_tunnel_ip(active_conn, src_ip);
+            }
+            
             // Write to TUN device
             io_op_t *tun_op = io_op_alloc(OP_TYPE_TUN_WRITE);
             if (tun_op) {

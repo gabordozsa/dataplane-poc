@@ -234,6 +234,34 @@ void print_ip_packet_info(const uint8_t *packet, size_t len) {
     } else {
         log_debug("Unknown IP version: %d", version);
     }
+
+uint32_t get_ipv4_destination(const uint8_t *packet, size_t len) {
+    if (len < 20) {
+        return 0;
+    }
+    
+    uint8_t version = (packet[0] >> 4);
+    if (version != 4) {
+        return 0;  // Not IPv4
+    }
+    
+    struct iphdr *iph = (struct iphdr *)packet;
+    return iph->daddr;  // Already in network byte order
+}
+
+uint32_t get_ipv4_source(const uint8_t *packet, size_t len) {
+    if (len < 20) {
+        return 0;
+    }
+    
+    uint8_t version = (packet[0] >> 4);
+    if (version != 4) {
+        return 0;  // Not IPv4
+    }
+    
+    struct iphdr *iph = (struct iphdr *)packet;
+    return iph->saddr;  // Already in network byte order
+}
 }
 
 // Made with Bob
