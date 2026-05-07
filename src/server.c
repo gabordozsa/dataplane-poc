@@ -245,7 +245,7 @@ int main(int argc, char **argv) {
         // Periodic cleanup of idle connections
         time_t now = time(NULL);
         if (now - last_cleanup > 30) {
-            int cleaned = connection_cleanup_idle(conn_table, 60);
+            int cleaned = connection_cleanup_idle(conn_table, 60, uring_ctx);
             if (cleaned > 0) {
                 log_info("Cleaned up %d idle connections", cleaned);
             }

@@ -100,9 +100,10 @@ void connection_update_activity(connection_t *conn);
  * Cleanup idle connections
  * @param table Connection table
  * @param timeout Timeout in seconds
+ * @param uring_ctx IO uring context (for sending close_notify)
  * @return Number of connections cleaned up
  */
-int connection_cleanup_idle(connection_table_t *table, time_t timeout);
+int connection_cleanup_idle(connection_table_t *table, time_t timeout, void *uring_ctx);
 
 /**
  * Cleanup connection table and all connections

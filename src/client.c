@@ -266,6 +266,13 @@ int main(int argc, char **argv) {
             case OP_TYPE_UDP_RECV:
                 handle_udp_recv(cqe, NULL, &conn, NULL, uring_ctx);
                 
+                // Check if connection was closed by server
+                if (conn.state == CONN_STATE_CLOSING) {
+                    log_warn("Server closed the connection");
+                    running = 0;  // Exit main loop
+                    break;
+                }
+                
                 // Start reading from TUN once handshake is complete
                 if (conn.state == CONN_STATE_ESTABLISHED) {
                     static int tun_read_started = 0;

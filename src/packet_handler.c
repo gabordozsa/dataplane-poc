@@ -8,6 +8,10 @@ int process_dtls_handshake(connection_t *conn, iouring_ctx_t *uring_ctx) {
         return -1;
     }
     
+    // Check rbio before handshake
+    int rbio_before = BIO_ctrl_pending(conn->rbio);
+    log_debug("rbio pending before SSL_do_handshake: %d bytes", rbio_before);
+    
     // Clear any previous errors
     ERR_clear_error();
     
@@ -15,6 +19,10 @@ int process_dtls_handshake(connection_t *conn, iouring_ctx_t *uring_ctx) {
     int err = SSL_get_error(conn->ssl, ret);
     
     log_debug("process_dtls_handshake: ret=%d, err=%d (%s)", ret, err, dtls_get_error_string(conn->ssl, ret));
+    
+    // Check rbio after handshake to see if SSL consumed the data
+    int rbio_after = BIO_ctrl_pending(conn->rbio);
+    log_debug("rbio pending after SSL_do_handshake: %d bytes (consumed: %d)", rbio_after, rbio_before - rbio_after);
     
     // Check for pending output FIRST, before checking return value
     // SSL may have generated response data even if handshake isn't complete
@@ -130,7 +138,32 @@ int dtls_recv_and_decrypt(connection_t *conn, const uint8_t *encrypted,
     
     int err = SSL_get_error(conn->ssl, read);
     
-    if (err == SSL_ERROR_WANT_READ) {
+    if (err == SSL_ERROR_ZERO_RETURN) {
+        // Received close_notify from peer - connection is being closed
+        log_info("Received close_notify from peer - connection closed gracefully");
+        conn->state = CONN_STATE_CLOSING;
+        
+        // Send our own close_notify in response
+        SSL_shutdown(conn->ssl);
+        
+        // Check if we need to send the close_notify
+        int pending = BIO_ctrl_pending(conn->wbio);
+        if (pending > 0) {
+            uint8_t buffer[PACKET_BUFFER_SIZE];
+            int out_len = BIO_read(conn->wbio, buffer, sizeof(buffer));
+            if (out_len > 0) {
+                io_op_t *op = io_op_alloc(OP_TYPE_UDP_SEND);
+                if (op) {
+                    iouring_submit_udp_send(uring_ctx, op,
+                                          (struct sockaddr *)&conn->addr,
+                                          conn->addr_len, buffer, out_len);
+                    log_debug("Sent close_notify response (%d bytes)", out_len);
+                }
+            }
+        }
+        
+        return -1;  // Signal connection closed
+    } else if (err == SSL_ERROR_WANT_READ) {
         // Need more data - check if SSL wants to send
         int pending = BIO_ctrl_pending(conn->wbio);
         if (pending > 0) {
@@ -308,7 +341,12 @@ int handle_udp_recv(struct io_uring_cqe *cqe, connection_table_t *conn_table,
     // Process based on connection state
     if (active_conn->state == CONN_STATE_HANDSHAKING) {
         // Feed data to SSL for handshake
-        BIO_write(active_conn->rbio, op->buffer, packet_len);
+        int written = BIO_write(active_conn->rbio, op->buffer, packet_len);
+        log_debug("Wrote %d bytes to rbio (packet_len=%d)", written, packet_len);
+        
+        // Check how much data is pending in rbio
+        int rbio_pending = BIO_ctrl_pending(active_conn->rbio);
+        log_debug("rbio pending after write: %d bytes", rbio_pending);
         
         // Process handshake - call once, not in a loop
         // DTLS handshake is asynchronous and may need multiple packets
