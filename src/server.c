@@ -129,12 +129,21 @@ int main(int argc, char **argv) {
     }
     
     // Submit initial TUN read operations
+    log_info("Submitting initial TUN read operations...");
+    int tun_reads_submitted = 0;
     for (int i = 0; i < 4; i++) {
         io_op_t *op = io_op_alloc(OP_TYPE_TUN_READ);
         if (op) {
-            iouring_submit_tun_read(uring_ctx, op);
+            int ret = iouring_submit_tun_read(uring_ctx, op);
+            if (ret == 0) {
+                tun_reads_submitted++;
+            } else {
+                log_error("Failed to submit TUN read %d", i);
+                io_op_free(op);
+            }
         }
     }
+    log_info("Submitted %d TUN read operations", tun_reads_submitted);
     
     log_info("Server ready, entering main loop...");
     
@@ -217,7 +226,15 @@ int main(int argc, char **argv) {
                 {
                     io_op_t *new_op = io_op_alloc(OP_TYPE_TUN_READ);
                     if (new_op) {
-                        iouring_submit_tun_read(uring_ctx, new_op);
+                        int ret = iouring_submit_tun_read(uring_ctx, new_op);
+                        if (ret != 0) {
+                            log_error("Failed to resubmit TUN read");
+                            io_op_free(new_op);
+                        } else {
+                            log_debug("Resubmitted TUN read operation");
+                        }
+                    } else {
+                        log_error("Failed to allocate op for TUN read resubmit");
                     }
                 }
                 break;
