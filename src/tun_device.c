@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <errno.h>
 
 tun_device_t* tun_device_create(const char *name) {
