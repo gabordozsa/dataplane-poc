@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  vpn-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    image: dtls-vpn-server:latest
+    container_name: dtls-vpn-server
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    ports:
+      - "4433:4433/udp"
+    networks:
+      vpn-network:
+        ipv4_address: 172.20.0.10
+    command: ["./server", "4433", "certs/server_cert.pem", "certs/server_key.pem", "10.9.0.254"]
+    restart: unless-stopped
+
+  vpn-client:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    image: dtls-vpn-client:latest
+    container_name: dtls-vpn-client
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    networks:
+      vpn-network:
+        ipv4_address: 172.20.0.20
+    depends_on:
+      - vpn-server
+    command: ["./client", "172.20.0.10", "4433", "10.8.0.1"]
+    restart: unless-stopped
+
+networks:
+  vpn-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+
+# Made with Bob
