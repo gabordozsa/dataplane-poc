@@ -203,8 +203,19 @@ int iouring_wait_cqe(iouring_ctx_t *ctx, struct io_uring_cqe **cqe_ptr) {
         return -1;
     }
     
-    int ret = io_uring_wait_cqe(&ctx->ring, cqe_ptr);
+    // Use timeout to allow periodic tasks (like idle connection cleanup)
+    // Timeout of 1 second allows checking for idle connections regularly
+    struct __kernel_timespec ts = {
+        .tv_sec = 1,
+        .tv_nsec = 0
+    };
+    
+    int ret = io_uring_wait_cqe_timeout(&ctx->ring, cqe_ptr, &ts);
     if (ret < 0) {
+        if (ret == -ETIME) {
+            // Timeout - not an error, just no events within timeout period
+            return -ETIME;
+        }
         log_error("Failed to wait for CQE: %s", strerror(-ret));
         return -1;
     }

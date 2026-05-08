@@ -20,6 +20,104 @@ static void signal_handler(int signum) {
     running = 0;
 }
 
+static void process_io_operation(struct io_uring_cqe *cqe, io_op_t *op,
+                                  connection_table_t *conn_table,
+                                  dtls_ctx_t *dtls_ctx,
+                                  iouring_ctx_t *uring_ctx) {
+    // Process based on operation type
+    switch (op->op_type) {
+        case OP_TYPE_TUN_READ:
+            // Server reads from TUN and routes to appropriate client
+            if (cqe->res > 0) {
+                int packet_len = cqe->res;
+                log_debug("Read %d bytes from TUN (server)", packet_len);
+                
+                // Validate IP packet
+                if (validate_ip_packet(op->buffer, packet_len)) {
+                    print_ip_packet_info(op->buffer, packet_len);
+                    
+                    // Extract destination IP
+                    uint32_t dest_ip = get_ipv4_destination(op->buffer, packet_len);
+                    
+                    if (dest_ip != 0) {
+                        // Find connection by tunnel IP
+                        connection_t *target_conn = connection_find_by_tunnel_ip(conn_table, dest_ip);
+                        
+                        if (target_conn) {
+                            // Route to specific client
+                            dtls_encrypt_and_send(target_conn, op->buffer, packet_len, uring_ctx);
+                            
+                            struct in_addr addr;
+                            addr.s_addr = dest_ip;
+                            char ip_str[INET_ADDRSTRLEN];
+                            inet_ntop(AF_INET, &addr, ip_str, sizeof(ip_str));
+                            log_debug("Routed packet to client with tunnel IP %s", ip_str);
+                        } else {
+                            struct in_addr addr;
+                            addr.s_addr = dest_ip;
+                            char ip_str[INET_ADDRSTRLEN];
+                            inet_ntop(AF_INET, &addr, ip_str, sizeof(ip_str));
+                            log_debug("No client found for tunnel IP %s", ip_str);
+                        }
+                    } else {
+                        // Not IPv4 or couldn't extract IP, broadcast to all
+                        log_debug("Non-IPv4 packet, broadcasting to all clients");
+                        int sent_count = 0;
+                        for (size_t i = 0; i < conn_table->bucket_count; i++) {
+                            connection_t *conn = conn_table->buckets[i];
+                            while (conn) {
+                                if (conn->state == CONN_STATE_ESTABLISHED) {
+                                    dtls_encrypt_and_send(conn, op->buffer, packet_len, uring_ctx);
+                                    sent_count++;
+                                }
+                                conn = conn->next;
+                            }
+                        }
+                        log_debug("Broadcast packet to %d client(s)", sent_count);
+                    }
+                } else {
+                    log_warn("Invalid IP packet from TUN (server)");
+                }
+            }
+            
+            io_op_free(op);
+            
+            // Resubmit TUN read
+            {
+                io_op_t *new_op = io_op_alloc(OP_TYPE_TUN_READ);
+                if (new_op) {
+                    int ret = iouring_submit_tun_read(uring_ctx, new_op);
+                    if (ret != 0) {
+                        log_error("Failed to resubmit TUN read");
+                        io_op_free(new_op);
+                    } else {
+                        log_debug("Resubmitted TUN read operation");
+                    }
+                } else {
+                    log_error("Failed to allocate op for TUN read resubmit");
+                }
+            }
+            break;
+            
+        case OP_TYPE_UDP_RECV:
+            handle_udp_recv(cqe, conn_table, NULL, dtls_ctx, uring_ctx);
+            break;
+            
+        case OP_TYPE_TUN_WRITE:
+            handle_tun_write(cqe);
+            break;
+            
+        case OP_TYPE_UDP_SEND:
+            handle_udp_send(cqe);
+            break;
+            
+        default:
+            log_warn("Unknown operation type: %d", op->op_type);
+            io_op_free(op);
+            break;
+    }
+}
+
 int main(int argc, char **argv) {
     if (argc < 4) {
         fprintf(stderr, "Usage: %s <port> <cert_file> <key_file> [tun_ip]\n", argv[0]);
@@ -154,7 +252,13 @@ int main(int argc, char **argv) {
         struct io_uring_cqe *cqe;
         
         // Wait for completion event with timeout
-        if (iouring_wait_cqe(uring_ctx, &cqe) < 0) {
+        int wait_ret = iouring_wait_cqe(uring_ctx, &cqe);
+        if (wait_ret < 0) {
+            if (wait_ret == -ETIME) {
+                // Timeout - no events, continue to periodic tasks
+                goto periodic_tasks;
+            }
+            // Other error - exit
             break;
         }
         
@@ -164,102 +268,14 @@ int main(int argc, char **argv) {
             continue;
         }
         
-        // Process based on operation type
-        switch (op->op_type) {
-            case OP_TYPE_TUN_READ:
-                // Server reads from TUN and routes to appropriate client
-                if (cqe->res > 0) {
-                    int packet_len = cqe->res;
-                    log_debug("Read %d bytes from TUN (server)", packet_len);
-                    
-                    // Validate IP packet
-                    if (validate_ip_packet(op->buffer, packet_len)) {
-                        print_ip_packet_info(op->buffer, packet_len);
-                        
-                        // Extract destination IP
-                        uint32_t dest_ip = get_ipv4_destination(op->buffer, packet_len);
-                        
-                        if (dest_ip != 0) {
-                            // Find connection by tunnel IP
-                            connection_t *target_conn = connection_find_by_tunnel_ip(conn_table, dest_ip);
-                            
-                            if (target_conn) {
-                                // Route to specific client
-                                dtls_encrypt_and_send(target_conn, op->buffer, packet_len, uring_ctx);
-                                
-                                struct in_addr addr;
-                                addr.s_addr = dest_ip;
-                                char ip_str[INET_ADDRSTRLEN];
-                                inet_ntop(AF_INET, &addr, ip_str, sizeof(ip_str));
-                                log_debug("Routed packet to client with tunnel IP %s", ip_str);
-                            } else {
-                                struct in_addr addr;
-                                addr.s_addr = dest_ip;
-                                char ip_str[INET_ADDRSTRLEN];
-                                inet_ntop(AF_INET, &addr, ip_str, sizeof(ip_str));
-                                log_debug("No client found for tunnel IP %s", ip_str);
-                            }
-                        } else {
-                            // Not IPv4 or couldn't extract IP, broadcast to all
-                            log_debug("Non-IPv4 packet, broadcasting to all clients");
-                            int sent_count = 0;
-                            for (size_t i = 0; i < conn_table->bucket_count; i++) {
-                                connection_t *conn = conn_table->buckets[i];
-                                while (conn) {
-                                    if (conn->state == CONN_STATE_ESTABLISHED) {
-                                        dtls_encrypt_and_send(conn, op->buffer, packet_len, uring_ctx);
-                                        sent_count++;
-                                    }
-                                    conn = conn->next;
-                                }
-                            }
-                            log_debug("Broadcast packet to %d client(s)", sent_count);
-                        }
-                    } else {
-                        log_warn("Invalid IP packet from TUN (server)");
-                    }
-                }
-                
-                io_op_free(op);
-                
-                // Resubmit TUN read
-                {
-                    io_op_t *new_op = io_op_alloc(OP_TYPE_TUN_READ);
-                    if (new_op) {
-                        int ret = iouring_submit_tun_read(uring_ctx, new_op);
-                        if (ret != 0) {
-                            log_error("Failed to resubmit TUN read");
-                            io_op_free(new_op);
-                        } else {
-                            log_debug("Resubmitted TUN read operation");
-                        }
-                    } else {
-                        log_error("Failed to allocate op for TUN read resubmit");
-                    }
-                }
-                break;
-                
-            case OP_TYPE_UDP_RECV:
-                handle_udp_recv(cqe, conn_table, NULL, dtls_ctx, uring_ctx);
-                break;
-                
-            case OP_TYPE_TUN_WRITE:
-                handle_tun_write(cqe);
-                break;
-                
-            case OP_TYPE_UDP_SEND:
-                handle_udp_send(cqe);
-                break;
-                
-            default:
-                log_warn("Unknown operation type: %d", op->op_type);
-                io_op_free(op);
-                break;
-        }
+        // Process the I/O operation
+        process_io_operation(cqe, op, conn_table, dtls_ctx, uring_ctx);
         
         iouring_cqe_seen(uring_ctx, cqe);
         
+periodic_tasks:
         // Periodic cleanup of idle connections
+        // This runs after processing each event OR on timeout (every 1 second)
         time_t now = time(NULL);
         if (now - last_cleanup > 30) {
             int cleaned = connection_cleanup_idle(conn_table, 60, uring_ctx);

@@ -246,8 +246,14 @@ int main(int argc, char **argv) {
     while (running) {
         struct io_uring_cqe *cqe;
         
-        // Wait for completion event
-        if (iouring_wait_cqe(uring_ctx, &cqe) < 0) {
+        // Wait for completion event with timeout
+        int wait_ret = iouring_wait_cqe(uring_ctx, &cqe);
+        if (wait_ret < 0) {
+            if (wait_ret == -ETIME) {
+                // Timeout - no events, just continue
+                continue;
+            }
+            // Other error - exit
             break;
         }
         
