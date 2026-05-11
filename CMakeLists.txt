@@ -60,6 +60,16 @@ target_link_libraries(vpn_client
     ${LIBURING_LIBRARIES}
 )
 
+# DTLS Forwarder executable
+add_executable(dtls_forwarder
+    src/forwarder.c
+)
+target_link_libraries(dtls_forwarder
+    dtls_vpn_common
+    ${OPENSSL_LIBRARIES}
+    ${LIBURING_LIBRARIES}
+)
+
 # Example programs
 add_executable(example_server
     examples/vpn_server.c
@@ -80,7 +90,7 @@ target_link_libraries(example_client
 )
 
 # Installation
-install(TARGETS vpn_server vpn_client
+install(TARGETS vpn_server vpn_client dtls_forwarder
     RUNTIME DESTINATION bin
 )
 
