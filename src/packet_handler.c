@@ -300,6 +300,14 @@ int handle_udp_recv(struct io_uring_cqe *cqe, connection_table_t *conn_table,
         active_conn = connection_find(conn_table, src_addr);
         
         if (!active_conn && dtls_ctx) {
+            // Check if this is a DTLS alert (close_notify response from deleted connection)
+            // DTLS alerts are typically small (< 50 bytes) and start with content type 0x15
+            if (packet_len > 0 && packet_len < 50 && op->buffer[0] == 0x15) {
+                log_debug("Received DTLS alert from unknown connection %s (likely close_notify response), ignoring", addr_str);
+                io_op_free(op);
+                goto resubmit;
+            }
+            
             // New connection
             log_info("New connection from %s", addr_str);
             
