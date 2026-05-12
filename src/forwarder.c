@@ -31,13 +31,21 @@ forwarder_ctx_t *forwarder_create(uint16_t port, const char *cert_file,
     dtls_library_init();
     
     // Create UDP socket
-    ctx->udp_fd = udp_socket_create(port);
+    ctx->udp_fd = udp_socket_create();
     if (ctx->udp_fd < 0) {
-        log_error("Failed to create UDP socket on port %d", port);
+        log_error("Failed to create UDP socket");
         free(ctx);
         return NULL;
     }
-    log_info("Created UDP socket on port %d (fd=%d)", port, ctx->udp_fd);
+    
+    // Bind to port
+    if (udp_socket_bind(ctx->udp_fd, port, NULL) < 0) {
+        log_error("Failed to bind UDP socket to port %d", port);
+        close(ctx->udp_fd);
+        free(ctx);
+        return NULL;
+    }
+    log_info("Created and bound UDP socket on port %d (fd=%d)", port, ctx->udp_fd);
     
     // Create io-uring context
     ctx->uring_ctx = iouring_create(256);
