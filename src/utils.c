@@ -95,20 +95,24 @@ uint64_t get_timestamp_us(void) {
     return (uint64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
 }
 
-void addr_to_string(const struct sockaddr *addr, char *buf, size_t len) {
+const char* addr_to_string(const struct sockaddr *addr) {
+    static char buf[128];  // Static buffer for address string
+    
     if (addr->sa_family == AF_INET) {
         struct sockaddr_in *sin = (struct sockaddr_in *)addr;
         char ip[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &sin->sin_addr, ip, sizeof(ip));
-        snprintf(buf, len, "%s:%d", ip, ntohs(sin->sin_port));
+        snprintf(buf, sizeof(buf), "%s:%d", ip, ntohs(sin->sin_port));
     } else if (addr->sa_family == AF_INET6) {
         struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)addr;
         char ip[INET6_ADDRSTRLEN];
         inet_ntop(AF_INET6, &sin6->sin6_addr, ip, sizeof(ip));
-        snprintf(buf, len, "[%s]:%d", ip, ntohs(sin6->sin6_port));
+        snprintf(buf, sizeof(buf), "[%s]:%d", ip, ntohs(sin6->sin6_port));
     } else {
-        snprintf(buf, len, "unknown");
+        snprintf(buf, sizeof(buf), "unknown");
     }
+    
+    return buf;
 }
 
 uint32_t addr_hash(const struct sockaddr *addr, size_t bucket_count) {

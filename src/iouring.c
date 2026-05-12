@@ -14,7 +14,6 @@ iouring_ctx_t* iouring_init(unsigned queue_depth) {
     
     ctx->queue_depth = queue_depth;
     ctx->tun_fd = -1;
-    ctx->udp_fd = -1;
     
     // Initialize io-uring
     int ret = io_uring_queue_init(queue_depth, &ctx->ring, 0);
@@ -29,18 +28,10 @@ iouring_ctx_t* iouring_init(unsigned queue_depth) {
     return ctx;
 }
 
-void iouring_set_fds(iouring_ctx_t *ctx, int tun_fd, int udp_fd) {
+void iouring_set_tun_fd(iouring_ctx_t *ctx, int tun_fd) {
     if (ctx) {
         ctx->tun_fd = tun_fd;
-        ctx->udp_fd = udp_fd;
-        log_debug("Set io-uring fds: tun=%d, udp=%d", tun_fd, udp_fd);
-    }
-}
-
-void iouring_set_udp_socket(iouring_ctx_t *ctx, int udp_fd) {
-    if (ctx) {
-        ctx->udp_fd = udp_fd;
-        log_debug("Set io-uring UDP socket: udp=%d", udp_fd);
+        log_debug("Set io-uring TUN fd: tun=%d", tun_fd);
     }
 }
 
@@ -109,8 +100,8 @@ int iouring_submit_tun_write(iouring_ctx_t *ctx, io_op_t *op,
     return 0;
 }
 
-int iouring_submit_udp_recv(iouring_ctx_t *ctx, io_op_t *op) {
-    if (!ctx || !op || ctx->udp_fd < 0) {
+int iouring_submit_udp_recv(iouring_ctx_t *ctx, int udp_fd, io_op_t *op) {
+    if (!ctx || !op || udp_fd < 0) {
         log_error("Invalid parameters for UDP recv");
         return -1;
     }
@@ -137,7 +128,7 @@ int iouring_submit_udp_recv(iouring_ctx_t *ctx, io_op_t *op) {
     op->addr_len = sizeof(op->addr);
     
     // Prepare recvmsg operation
-    io_uring_prep_recvmsg(sqe, ctx->udp_fd, &op->msg, 0);
+    io_uring_prep_recvmsg(sqe, udp_fd, &op->msg, 0);
     io_uring_sqe_set_data(sqe, op);
     
     // Submit
@@ -147,14 +138,14 @@ int iouring_submit_udp_recv(iouring_ctx_t *ctx, io_op_t *op) {
         return -1;
     }
     
-    log_debug("Submitted UDP recv operation");
+    log_debug("Submitted UDP recv operation on fd=%d", udp_fd);
     return 0;
 }
 
-int iouring_submit_udp_send(iouring_ctx_t *ctx, io_op_t *op,
+int iouring_submit_udp_send(iouring_ctx_t *ctx, int udp_fd, io_op_t *op,
                             const struct sockaddr *addr, socklen_t addr_len,
                             const uint8_t *data, size_t len) {
-    if (!ctx || !op || !addr || !data || ctx->udp_fd < 0) {
+    if (!ctx || !op || !addr || !data || udp_fd < 0) {
         log_error("Invalid parameters for UDP send");
         return -1;
     }
@@ -187,7 +178,7 @@ int iouring_submit_udp_send(iouring_ctx_t *ctx, io_op_t *op,
     op->msg.msg_namelen = addr_len;
     
     // Prepare sendmsg operation
-    io_uring_prep_sendmsg(sqe, ctx->udp_fd, &op->msg, 0);
+    io_uring_prep_sendmsg(sqe, udp_fd, &op->msg, 0);
     io_uring_sqe_set_data(sqe, op);
     
     // Submit
@@ -197,9 +188,8 @@ int iouring_submit_udp_send(iouring_ctx_t *ctx, io_op_t *op,
         return -1;
     }
     
-    char addr_str[64];
-    addr_to_string(addr, addr_str, sizeof(addr_str));
-    log_debug("Submitted UDP send operation: %zu bytes to %s", len, addr_str);
+    log_debug("Submitted UDP send operation on fd=%d: %zu bytes to %s",
+              udp_fd, len, addr_to_string(addr));
     
     return 0;
 }

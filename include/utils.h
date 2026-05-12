@@ -28,7 +28,7 @@ uint64_t get_timestamp_ms(void);
 uint64_t get_timestamp_us(void);
 
 // Address utilities
-void addr_to_string(const struct sockaddr *addr, char *buf, size_t len);
+const char* addr_to_string(const struct sockaddr *addr);
 uint32_t addr_hash(const struct sockaddr *addr, size_t bucket_count);
 int addr_compare(const struct sockaddr *a, const struct sockaddr *b);
 void addr_copy(struct sockaddr_storage *dst, const struct sockaddr *src, socklen_t len);

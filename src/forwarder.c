@@ -19,8 +19,128 @@ static void signal_handler(int signum) {
     running = 0;
 }
 
-forwarder_ctx_t *forwarder_create(uint16_t port, const char *cert_file,
-                                   const char *key_file, const char *ca_file) {
+static connection_t* forwarder_create_connection(dtls_ctx_t *dtls_ctx,
+                                                  const struct sockaddr *addr,
+                                                  socklen_t addr_len) {
+    if (!dtls_ctx || !addr) {
+        return NULL;
+    }
+    
+    // Create SSL
+    SSL *ssl = dtls_create_ssl(dtls_ctx);
+    if (!ssl) {
+        log_error("Failed to create SSL");
+        return NULL;
+    }
+    
+    // Setup BIO pair
+    BIO *rbio, *wbio;
+    if (dtls_setup_bio_pair(ssl, &rbio, &wbio) < 0) {
+        log_error("Failed to setup BIO pair");
+        SSL_free(ssl);
+        return NULL;
+    }
+    
+    // Create connection structure
+    connection_t *conn = calloc(1, sizeof(connection_t));
+    if (!conn) {
+        log_error("Failed to allocate connection");
+        SSL_free(ssl);
+        return NULL;
+    }
+    
+    conn->ssl = ssl;
+    conn->rbio = rbio;
+    conn->wbio = wbio;
+    memcpy(&conn->addr, addr, addr_len);
+    conn->addr_len = addr_len;
+    conn->state = CONN_STATE_HANDSHAKING;
+    conn->last_activity = time(NULL);
+    
+    return conn;
+}
+
+static int forwarder_handle_handshake(forwarder_ctx_t *ctx,
+                                       forwarder_connection_t *conn,
+                                       const uint8_t *data, size_t len) {
+    if (!ctx || !conn || !conn->conn || !data) {
+        return -1;
+    }
+    
+    // Feed data to SSL for handshake
+    int written = BIO_write(conn->conn->rbio, data, len);
+    log_debug("Wrote %d bytes to rbio for handshake", written);
+    
+    // Determine which UDP socket to use
+    int udp_fd = (conn->role == FORWARDER_ROLE_CLIENT) ?
+                 ctx->outbound_udp_fd : ctx->inbound_udp_fd;
+    
+    // Process handshake
+    int hs_ret = process_dtls_handshake(conn->conn, udp_fd, ctx->uring_ctx);
+    
+    if (hs_ret == 0) {
+        log_info("Handshake completed for %s connection",
+                 conn->role == FORWARDER_ROLE_CLIENT ? "outbound" : "inbound");
+        conn->established = 1;
+        
+        // Check if both connections are established
+        if (ctx->outbound.established && ctx->inbound.established) {
+            log_info("=== Both connections established - forwarding active ===");
+        }
+        return 0;
+    } else if (hs_ret < 0) {
+        log_error("Handshake failed for %s connection",
+                  conn->role == FORWARDER_ROLE_CLIENT ? "outbound" : "inbound");
+        return -1;
+    }
+    
+    // Handshake in progress
+    return 1;
+}
+
+static int forwarder_decrypt_and_forward(forwarder_ctx_t *ctx,
+                                          forwarder_connection_t *recv_conn,
+                                          forwarder_connection_t *forward_conn,
+                                          const uint8_t *encrypted, size_t encrypted_len) {
+    if (!ctx || !recv_conn || !forward_conn || !encrypted) {
+        return -1;
+    }
+    
+    // Determine which UDP socket to use
+    int udp_fd = (recv_conn->role == FORWARDER_ROLE_CLIENT) ?
+                 ctx->outbound_udp_fd : ctx->inbound_udp_fd;
+    
+    // Decrypt packet
+    uint8_t decrypted[PACKET_BUFFER_SIZE];
+    int decrypted_len = dtls_recv_and_decrypt(recv_conn->conn, udp_fd, encrypted,
+                                               encrypted_len, decrypted,
+                                               sizeof(decrypted), ctx->uring_ctx);
+    
+    if (decrypted_len > 0) {
+        log_debug("Decrypted %d bytes", decrypted_len);
+        
+        // Validate as IP packet
+        if (validate_ip_packet(decrypted, decrypted_len)) {
+            print_ip_packet_info(decrypted, decrypted_len);
+            
+            // Forward to other connection
+            return forwarder_forward_packet(ctx, recv_conn, forward_conn,
+                                           decrypted, decrypted_len);
+        } else {
+            log_warn("Received non-IP packet, dropping");
+            return -1;
+        }
+    } else if (decrypted_len < 0) {
+        log_warn("Connection closed or error occurred");
+        return -1;
+    }
+    
+    return 0;
+}
+
+forwarder_ctx_t *forwarder_create(uint16_t inbound_port, uint16_t outbound_port,
+                                   const char *cert_file, const char *key_file,
+                                   const char *ca_file) {
     forwarder_ctx_t *ctx = calloc(1, sizeof(forwarder_ctx_t));
     if (!ctx) {
         log_error("Failed to allocate forwarder context");
@@ -30,41 +150,61 @@ forwarder_ctx_t *forwarder_create(uint16_t port, const char *cert_file,
     // Initialize OpenSSL
     dtls_library_init();
     
-    // Create UDP socket
-    ctx->udp_fd = udp_socket_create();
-    if (ctx->udp_fd < 0) {
-        log_error("Failed to create UDP socket");
+    // Create inbound UDP socket
+    ctx->inbound_udp_fd = udp_socket_create();
+    if (ctx->inbound_udp_fd < 0) {
+        log_error("Failed to create inbound UDP socket");
         free(ctx);
         return NULL;
     }
     
-    // Bind to port
-    if (udp_socket_bind(ctx->udp_fd, port, NULL) < 0) {
-        log_error("Failed to bind UDP socket to port %d", port);
-        close(ctx->udp_fd);
+    // Bind inbound socket to port
+    if (udp_socket_bind(ctx->inbound_udp_fd, inbound_port, NULL) < 0) {
+        log_error("Failed to bind inbound UDP socket to port %d", inbound_port);
+        close(ctx->inbound_udp_fd);
         free(ctx);
         return NULL;
     }
-    log_info("Created and bound UDP socket on port %d (fd=%d)", port, ctx->udp_fd);
+    log_info("Created and bound inbound UDP socket on port %d (fd=%d)",
+             inbound_port, ctx->inbound_udp_fd);
+    
+    // Create outbound UDP socket
+    ctx->outbound_udp_fd = udp_socket_create();
+    if (ctx->outbound_udp_fd < 0) {
+        log_error("Failed to create outbound UDP socket");
+        close(ctx->inbound_udp_fd);
+        free(ctx);
+        return NULL;
+    }
+    
+    // Bind outbound socket to port
+    if (udp_socket_bind(ctx->outbound_udp_fd, outbound_port, NULL) < 0) {
+        log_error("Failed to bind outbound UDP socket to port %d", outbound_port);
+        close(ctx->inbound_udp_fd);
+        close(ctx->outbound_udp_fd);
+        free(ctx);
+        return NULL;
+    }
+    log_info("Created and bound outbound UDP socket on port %d (fd=%d)",
+             outbound_port, ctx->outbound_udp_fd);
     
     // Create io-uring context
     ctx->uring_ctx = iouring_create(256);
     if (!ctx->uring_ctx) {
         log_error("Failed to create io-uring context");
-        close(ctx->udp_fd);
+        close(ctx->inbound_udp_fd);
+        close(ctx->outbound_udp_fd);
         free(ctx);
         return NULL;
     }
-    
-    // Set UDP socket in io-uring context
-    iouring_set_udp_socket(ctx->uring_ctx, ctx->udp_fd);
     
     // Create server DTLS context (for accepting inbound connections)
     ctx->server_dtls_ctx = dtls_context_create_server(cert_file, key_file);
     if (!ctx->server_dtls_ctx) {
         log_error("Failed to create server DTLS context");
         iouring_destroy(ctx->uring_ctx);
-        close(ctx->udp_fd);
+        close(ctx->inbound_udp_fd);
+        close(ctx->outbound_udp_fd);
         free(ctx);
         return NULL;
     }
@@ -76,7 +216,8 @@ forwarder_ctx_t *forwarder_create(uint16_t port, const char *cert_file,
         log_error("Failed to create client DTLS context");
         dtls_context_destroy(ctx->server_dtls_ctx);
         iouring_destroy(ctx->uring_ctx);
-        close(ctx->udp_fd);
+        close(ctx->inbound_udp_fd);
+        close(ctx->outbound_udp_fd);
         free(ctx);
         return NULL;
     }
@@ -134,9 +275,12 @@ void forwarder_destroy(forwarder_ctx_t *ctx) {
         iouring_destroy(ctx->uring_ctx);
     }
     
-    // Close UDP socket
-    if (ctx->udp_fd >= 0) {
-        close(ctx->udp_fd);
+    // Close UDP sockets
+    if (ctx->inbound_udp_fd >= 0) {
+        close(ctx->inbound_udp_fd);
+    }
+    if (ctx->outbound_udp_fd >= 0) {
+        close(ctx->outbound_udp_fd);
     }
     
     free(ctx);
@@ -170,46 +314,22 @@ int forwarder_connect_outbound(forwarder_ctx_t *ctx, const char *host, uint16_t 
     ctx->outbound.addr_len = result->ai_addrlen;
     freeaddrinfo(result);
     
-    char addr_str[64];
-    addr_to_string((struct sockaddr *)&ctx->outbound.addr, addr_str, sizeof(addr_str));
-    log_info("Resolved to %s", addr_str);
-    
-    // Create SSL object for outbound connection
-    SSL *ssl = dtls_create_ssl(ctx->client_dtls_ctx);
-    if (!ssl) {
-        log_error("Failed to create SSL for outbound connection");
-        return -1;
-    }
-    
-    // Setup BIO pair
-    BIO *rbio, *wbio;
-    if (dtls_setup_bio_pair(ssl, &rbio, &wbio) < 0) {
-        log_error("Failed to setup BIO pair for outbound connection");
-        SSL_free(ssl);
-        return -1;
-    }
+    log_info("Resolved to %s", addr_to_string((struct sockaddr *)&ctx->outbound.addr));
     
     // Create connection structure
-    ctx->outbound.conn = calloc(1, sizeof(connection_t));
+    ctx->outbound.conn = forwarder_create_connection(ctx->client_dtls_ctx,
+                                                      (struct sockaddr *)&ctx->outbound.addr,
+                                                      ctx->outbound.addr_len);
     if (!ctx->outbound.conn) {
-        log_error("Failed to allocate outbound connection");
-        SSL_free(ssl);
+        log_error("Failed to create outbound connection");
         return -1;
     }
-    
-    ctx->outbound.conn->ssl = ssl;
-    ctx->outbound.conn->rbio = rbio;
-    ctx->outbound.conn->wbio = wbio;
-    memcpy(&ctx->outbound.conn->addr, &ctx->outbound.addr, ctx->outbound.addr_len);
-    ctx->outbound.conn->addr_len = ctx->outbound.addr_len;
-    ctx->outbound.conn->state = CONN_STATE_HANDSHAKING;
-    ctx->outbound.conn->last_activity = time(NULL);
     
     log_info("Created outbound connection structure");
     
     // Initiate handshake
     log_info("Starting DTLS handshake with %s", addr_str);
-    int hs_ret = process_dtls_handshake(ctx->outbound.conn, ctx->uring_ctx);
+    int hs_ret = process_dtls_handshake(ctx->outbound.conn, ctx->outbound_udp_fd, ctx->uring_ctx);
     if (hs_ret < 0) {
         log_error("Failed to initiate handshake");
         return -1;
@@ -232,8 +352,12 @@ int forwarder_forward_packet(forwarder_ctx_t *ctx,
         return -1;
     }
     
+    // Determine which UDP socket to use based on destination connection
+    int udp_fd = (to_conn->role == FORWARDER_ROLE_CLIENT) ?
+                 ctx->outbound_udp_fd : ctx->inbound_udp_fd;
+    
     // Encrypt and send to destination
-    int ret = dtls_encrypt_and_send(to_conn->conn, data, len, ctx->uring_ctx);
+    int ret = dtls_encrypt_and_send(to_conn->conn, udp_fd, data, len, ctx->uring_ctx);
     if (ret < 0) {
         log_error("Failed to forward packet");
         return -1;
@@ -248,10 +372,9 @@ int forwarder_forward_packet(forwarder_ctx_t *ctx,
         ctx->bytes_forwarded_in += len;
     }
     
-    char from_str[64], to_str[64];
-    addr_to_string((struct sockaddr *)&from_conn->addr, from_str, sizeof(from_str));
-    addr_to_string((struct sockaddr *)&to_conn->addr, to_str, sizeof(to_str));
-    log_debug("Forwarded %zu bytes: %s -> %s", len, from_str, to_str);
+    log_debug("Forwarded %zu bytes: %s -> %s", len,
+              addr_to_string((struct sockaddr *)&from_conn->addr),
+              addr_to_string((struct sockaddr *)&to_conn->addr));
     
     return 0;
 }
@@ -281,72 +404,51 @@ static int handle_udp_packet(forwarder_ctx_t *ctx, struct io_uring_cqe *cqe, io_
     int packet_len = cqe->res;
     struct sockaddr *src_addr = (struct sockaddr *)&op->addr;
     
-    char addr_str[64];
-    addr_to_string(src_addr, addr_str, sizeof(addr_str));
-    log_debug("Received %d bytes from %s", packet_len, addr_str);
+    // Determine which connection based solely on which socket received the packet
+    int from_inbound_socket = (op->udp_fd == ctx->inbound_udp_fd);
+    log_debug("Received %d bytes from %s on %s socket (fd=%d)",
+              packet_len, addr_to_string(src_addr),
+              from_inbound_socket ? "inbound" : "outbound",
+              op->udp_fd);
     
-    // Determine which connection this packet belongs to
     forwarder_connection_t *recv_conn = NULL;
     forwarder_connection_t *forward_conn = NULL;
     
-    // Check if it's from outbound connection
-    if (ctx->outbound.conn && 
-        addr_compare(src_addr, (struct sockaddr *)&ctx->outbound.addr) == 0) {
-        recv_conn = &ctx->outbound;
-        forward_conn = &ctx->inbound;
-        log_debug("Packet from outbound connection");
-    }
-    // Check if it's from inbound connection
-    else if (ctx->inbound.conn &&
-             addr_compare(src_addr, (struct sockaddr *)&ctx->inbound.addr) == 0) {
+    if (from_inbound_socket) {
+        // Packet on inbound socket
+        if (!ctx->inbound.conn) {
+            // New inbound connection
+            log_info("New inbound connection from %s", addr_to_string(src_addr));
+            
+            // Create connection structure
+            ctx->inbound.conn = forwarder_create_connection(ctx->server_dtls_ctx,
+                                                            src_addr,
+                                                            op->addr_len);
+            if (!ctx->inbound.conn) {
+                log_error("Failed to create inbound connection");
+                return -1;
+            }
+            
+            // Store address in forwarder connection structure
+            memcpy(&ctx->inbound.addr, src_addr, op->addr_len);
+            ctx->inbound.addr_len = op->addr_len;
+            
+            log_info("Created inbound connection structure");
+        }
+        
         recv_conn = &ctx->inbound;
         forward_conn = &ctx->outbound;
         log_debug("Packet from inbound connection");
-    }
-    // New inbound connection
-    else if (!ctx->inbound.conn) {
-        log_info("New inbound connection from %s", addr_str);
-        
-        // Create SSL for inbound connection
-        SSL *ssl = dtls_create_ssl(ctx->server_dtls_ctx);
-        if (!ssl) {
-            log_error("Failed to create SSL for inbound connection");
-            return -1;
-        }
-        
-        // Setup BIO pair
-        BIO *rbio, *wbio;
-        if (dtls_setup_bio_pair(ssl, &rbio, &wbio) < 0) {
-            log_error("Failed to setup BIO pair for inbound connection");
-            SSL_free(ssl);
-            return -1;
-        }
-        
-        // Create connection structure
-        ctx->inbound.conn = calloc(1, sizeof(connection_t));
-        if (!ctx->inbound.conn) {
-            log_error("Failed to allocate inbound connection");
-            SSL_free(ssl);
-            return -1;
-        }
-        
-        ctx->inbound.conn->ssl = ssl;
-        ctx->inbound.conn->rbio = rbio;
-        ctx->inbound.conn->wbio = wbio;
-        memcpy(&ctx->inbound.conn->addr, src_addr, op->addr_len);
-        ctx->inbound.conn->addr_len = op->addr_len;
-        memcpy(&ctx->inbound.addr, src_addr, op->addr_len);
-        ctx->inbound.addr_len = op->addr_len;
-        ctx->inbound.conn->state = CONN_STATE_HANDSHAKING;
-        ctx->inbound.conn->last_activity = time(NULL);
-        
-        recv_conn = &ctx->inbound;
-        forward_conn = &ctx->outbound;
-        
-        log_info("Created inbound connection structure");
     } else {
-        log_warn("Received packet from unknown address: %s", addr_str);
-        return -1;
+        // Packet on outbound socket - must be from outbound connection
+        if (!ctx->outbound.conn) {
+            log_warn("Received packet on outbound socket but no outbound connection exists");
+            return -1;
+        }
+        
+        recv_conn = &ctx->outbound;
+        forward_conn = &ctx->inbound;
+        log_debug("Packet from outbound connection");
     }
     
     // Update activity
@@ -356,51 +458,15 @@ static int handle_udp_packet(forwarder_ctx_t *ctx, struct io_uring_cqe *cqe, io_
     
     // Process based on connection state
     if (recv_conn->conn->state == CONN_STATE_HANDSHAKING) {
-        // Feed data to SSL for handshake
-        int written = BIO_write(recv_conn->conn->rbio, op->buffer, packet_len);
-        log_debug("Wrote %d bytes to rbio for handshake", written);
-        
-        // Process handshake
-        int hs_ret = process_dtls_handshake(recv_conn->conn, ctx->uring_ctx);
-        
-        if (hs_ret == 0) {
-            log_info("Handshake completed for %s connection",
-                     recv_conn->role == FORWARDER_ROLE_CLIENT ? "outbound" : "inbound");
-            recv_conn->established = 1;
-            
-            // Check if both connections are established
-            if (ctx->outbound.established && ctx->inbound.established) {
-                log_info("=== Both connections established - forwarding active ===");
-            }
-        } else if (hs_ret < 0) {
-            log_error("Handshake failed for %s connection",
-                      recv_conn->role == FORWARDER_ROLE_CLIENT ? "outbound" : "inbound");
+        // Handle DTLS handshake
+        int hs_ret = forwarder_handle_handshake(ctx, recv_conn, op->buffer, packet_len);
+        if (hs_ret < 0) {
             return -1;
         }
     } else if (recv_conn->conn->state == CONN_STATE_ESTABLISHED) {
-        // Decrypt packet
-        uint8_t decrypted[PACKET_BUFFER_SIZE];
-        int decrypted_len = dtls_recv_and_decrypt(recv_conn->conn, op->buffer,
-                                                   packet_len, decrypted,
-                                                   sizeof(decrypted), ctx->uring_ctx);
-        
-        if (decrypted_len > 0) {
-            log_debug("Decrypted %d bytes", decrypted_len);
-            
-            // Validate as IP packet
-            if (validate_ip_packet(decrypted, decrypted_len)) {
-                print_ip_packet_info(decrypted, decrypted_len);
-                
-                // Forward to other connection
-                forwarder_forward_packet(ctx, recv_conn, forward_conn,
-                                        decrypted, decrypted_len);
-            } else {
-                log_warn("Received non-IP packet, dropping");
-            }
-        } else if (decrypted_len < 0) {
-            log_warn("Connection closed or error occurred");
-            return -1;
-        }
+        // Decrypt and forward packet
+        forwarder_decrypt_and_forward(ctx, recv_conn, forward_conn,
+                                     op->buffer, packet_len);
     }
     
     return 0;
@@ -413,13 +479,27 @@ int forwarder_run(forwarder_ctx_t *ctx) {
     
     log_info("Starting forwarder main loop");
     
-    // Submit initial UDP receive operations
-    for (int i = 0; i < 8; i++) {
+    // Submit initial UDP receive operations for inbound socket
+    for (int i = 0; i < 4; i++) {
         io_op_t *op = io_op_alloc(OP_TYPE_UDP_RECV);
         if (op) {
-            int ret = iouring_submit_udp_recv(ctx->uring_ctx, op);
+            op->udp_fd = ctx->inbound_udp_fd;
+            int ret = iouring_submit_udp_recv(ctx->uring_ctx, ctx->inbound_udp_fd, op);
             if (ret != 0) {
-                log_error("Failed to submit UDP recv %d", i);
+                log_error("Failed to submit inbound UDP recv %d", i);
+                io_op_free(op);
+            }
+        }
+    }
+    
+    // Submit initial UDP receive operations for outbound socket
+    for (int i = 0; i < 4; i++) {
+        io_op_t *op = io_op_alloc(OP_TYPE_UDP_RECV);
+        if (op) {
+            op->udp_fd = ctx->outbound_udp_fd;
+            int ret = iouring_submit_udp_recv(ctx->uring_ctx, ctx->outbound_udp_fd, op);
+            if (ret != 0) {
+                log_error("Failed to submit outbound UDP recv %d", i);
                 io_op_free(op);
             }
         }
@@ -457,13 +537,16 @@ int forwarder_run(forwarder_ctx_t *ctx) {
         switch (op->op_type) {
             case OP_TYPE_UDP_RECV:
                 handle_udp_packet(ctx, cqe, op);
-                io_op_free(op);
                 
-                // Resubmit UDP receive
+                // Resubmit UDP receive on the same socket
                 {
+                    int udp_fd = op->udp_fd;
+                    io_op_free(op);
+                    
                     io_op_t *new_op = io_op_alloc(OP_TYPE_UDP_RECV);
                     if (new_op) {
-                        iouring_submit_udp_recv(ctx->uring_ctx, new_op);
+                        new_op->udp_fd = udp_fd;
+                        iouring_submit_udp_recv(ctx->uring_ctx, udp_fd, new_op);
                     }
                 }
                 break;
@@ -491,23 +574,25 @@ int forwarder_run(forwarder_ctx_t *ctx) {
 }
 
 int main(int argc, char **argv) {
-    if (argc < 7) {
-        fprintf(stderr, "Usage: %s <local_port> <cert_file> <key_file> <ca_file> <remote_host> <remote_port>\n", argv[0]);
-        fprintf(stderr, "Example: %s 5000 cert.pem key.pem ca.pem server.example.com 4433\n", argv[0]);
+    if (argc < 8) {
+        fprintf(stderr, "Usage: %s <inbound_port> <outbound_port> <cert_file> <key_file> <ca_file> <remote_host> <remote_port>\n", argv[0]);
+        fprintf(stderr, "Example: %s 5000 5001 cert.pem key.pem ca.pem server.example.com 4433\n", argv[0]);
         fprintf(stderr, "\n");
         fprintf(stderr, "The forwarder:\n");
-        fprintf(stderr, "  - Listens on <local_port> for inbound DTLS connections\n");
+        fprintf(stderr, "  - Listens on <inbound_port> for inbound DTLS connections\n");
+        fprintf(stderr, "  - Uses <outbound_port> for outbound DTLS connection\n");
         fprintf(stderr, "  - Connects to <remote_host>:<remote_port> as outbound DTLS connection\n");
         fprintf(stderr, "  - Forwards IP packets between the two DTLS sessions\n");
         return 1;
     }
     
-    uint16_t local_port = atoi(argv[1]);
-    const char *cert_file = argv[2];
-    const char *key_file = argv[3];
-    const char *ca_file = argv[4];
-    const char *remote_host = argv[5];
-    uint16_t remote_port = atoi(argv[6]);
+    uint16_t inbound_port = atoi(argv[1]);
+    uint16_t outbound_port = atoi(argv[2]);
+    const char *cert_file = argv[3];
+    const char *key_file = argv[4];
+    const char *ca_file = argv[5];
+    const char *remote_host = argv[6];
+    uint16_t remote_port = atoi(argv[7]);
     
     // Set up signal handlers
     signal(SIGINT, signal_handler);
@@ -516,14 +601,15 @@ int main(int argc, char **argv) {
     // Initialize logging
     log_set_level(LOG_DEBUG);
     log_info("Starting DTLS Forwarder");
-    log_info("Local port: %d", local_port);
+    log_info("Inbound port: %d", inbound_port);
+    log_info("Outbound port: %d", outbound_port);
     log_info("Certificate: %s", cert_file);
     log_info("Private key: %s", key_file);
     log_info("CA certificate: %s", ca_file);
     log_info("Remote endpoint: %s:%d", remote_host, remote_port);
     
     // Create forwarder context
-    forwarder_ctx_t *ctx = forwarder_create(local_port, cert_file, key_file, ca_file);
+    forwarder_ctx_t *ctx = forwarder_create(inbound_port, outbound_port, cert_file, key_file, ca_file);
     if (!ctx) {
         log_error("Failed to create forwarder context");
         return 1;

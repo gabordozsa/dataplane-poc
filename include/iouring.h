@@ -18,6 +18,7 @@
 typedef struct {
     int op_type;
     void *user_data;
+    int udp_fd;  // UDP socket file descriptor for this operation
     uint8_t buffer[PACKET_BUFFER_SIZE];
     struct msghdr msg;
     struct iovec iov;
@@ -30,7 +31,6 @@ typedef struct {
     struct io_uring ring;
     unsigned queue_depth;
     int tun_fd;
-    int udp_fd;
 } iouring_ctx_t;
 
 /**
@@ -41,19 +41,11 @@ typedef struct {
 iouring_ctx_t* iouring_init(unsigned queue_depth);
 
 /**
- * Set file descriptors for I/O operations
+ * Set TUN device file descriptor
  * @param ctx io-uring context
  * @param tun_fd TUN device file descriptor
- * @param udp_fd UDP socket file descriptor
  */
-void iouring_set_fds(iouring_ctx_t *ctx, int tun_fd, int udp_fd);
-
-/**
- * Set UDP socket file descriptor
- * @param ctx io-uring context
- * @param udp_fd UDP socket file descriptor
- */
-void iouring_set_udp_socket(iouring_ctx_t *ctx, int udp_fd);
+void iouring_set_tun_fd(iouring_ctx_t *ctx, int tun_fd);
 
 /**
  * Submit a TUN read operation
@@ -77,21 +69,23 @@ int iouring_submit_tun_write(iouring_ctx_t *ctx, io_op_t *op,
 /**
  * Submit a UDP receive operation
  * @param ctx io-uring context
+ * @param udp_fd UDP socket file descriptor
  * @param op I/O operation context
  * @return 0 on success, -1 on failure
  */
-int iouring_submit_udp_recv(iouring_ctx_t *ctx, io_op_t *op);
+int iouring_submit_udp_recv(iouring_ctx_t *ctx, int udp_fd, io_op_t *op);
 
 /**
  * Submit a UDP send operation
  * @param ctx io-uring context
+ * @param udp_fd UDP socket file descriptor
  * @param op I/O operation context
  * @param addr Destination address
  * @param data Data to send
  * @param len Length of data
  * @return 0 on success, -1 on failure
  */
-int iouring_submit_udp_send(iouring_ctx_t *ctx, io_op_t *op,
+int iouring_submit_udp_send(iouring_ctx_t *ctx, int udp_fd, io_op_t *op,
                             const struct sockaddr *addr, socklen_t addr_len,
                             const uint8_t *data, size_t len);
 

@@ -3,7 +3,7 @@
 #include <string.h>
 #include <errno.h>
 
-int process_dtls_handshake(connection_t *conn, iouring_ctx_t *uring_ctx) {
+int process_dtls_handshake(connection_t *conn, int udp_fd, iouring_ctx_t *uring_ctx) {
     if (!conn || !conn->ssl) {
         return -1;
     }
@@ -35,7 +35,7 @@ int process_dtls_handshake(connection_t *conn, iouring_ctx_t *uring_ctx) {
         if (read > 0) {
             io_op_t *op = io_op_alloc(OP_TYPE_UDP_SEND);
             if (op) {
-                iouring_submit_udp_send(uring_ctx, op,
+                iouring_submit_udp_send(uring_ctx, udp_fd, op,
                                       (struct sockaddr *)&conn->addr,
                                       conn->addr_len, buffer, read);
                 log_debug("Sent handshake response: %d bytes", read);
@@ -61,8 +61,8 @@ int process_dtls_handshake(connection_t *conn, iouring_ctx_t *uring_ctx) {
     return -1;
 }
 
-int dtls_encrypt_and_send(connection_t *conn, const uint8_t *data, size_t len,
-                          iouring_ctx_t *uring_ctx) {
+int dtls_encrypt_and_send(connection_t *conn, int udp_fd, const uint8_t *data,
+                          size_t len, iouring_ctx_t *uring_ctx) {
     if (!conn || !conn->ssl || !data || len == 0) {
         return -1;
     }
@@ -87,7 +87,7 @@ int dtls_encrypt_and_send(connection_t *conn, const uint8_t *data, size_t len,
             io_op_t *op = io_op_alloc(OP_TYPE_UDP_SEND);
             if (op) {
                 log_debug("Sending encrypted packet: %d bytes", read);
-                return iouring_submit_udp_send(uring_ctx, op,
+                return iouring_submit_udp_send(uring_ctx, udp_fd, op,
                                               (struct sockaddr *)&conn->addr,
                                               conn->addr_len, buffer, read);
             }
@@ -97,7 +97,7 @@ int dtls_encrypt_and_send(connection_t *conn, const uint8_t *data, size_t len,
     return 0;
 }
 
-int dtls_recv_and_decrypt(connection_t *conn, const uint8_t *encrypted,
+int dtls_recv_and_decrypt(connection_t *conn, int udp_fd, const uint8_t *encrypted,
                           size_t encrypted_len, uint8_t *decrypted,
                           size_t decrypted_size, iouring_ctx_t *uring_ctx) {
     if (!conn || !conn->ssl || !encrypted || !decrypted) {
@@ -126,7 +126,7 @@ int dtls_recv_and_decrypt(connection_t *conn, const uint8_t *encrypted,
             if (out_len > 0) {
                 io_op_t *op = io_op_alloc(OP_TYPE_UDP_SEND);
                 if (op) {
-                    iouring_submit_udp_send(uring_ctx, op,
+                    iouring_submit_udp_send(uring_ctx, udp_fd, op,
                                           (struct sockaddr *)&conn->addr,
                                           conn->addr_len, buffer, out_len);
                 }
@@ -154,7 +154,7 @@ int dtls_recv_and_decrypt(connection_t *conn, const uint8_t *encrypted,
             if (out_len > 0) {
                 io_op_t *op = io_op_alloc(OP_TYPE_UDP_SEND);
                 if (op) {
-                    iouring_submit_udp_send(uring_ctx, op,
+                    iouring_submit_udp_send(uring_ctx, udp_fd, op,
                                           (struct sockaddr *)&conn->addr,
                                           conn->addr_len, buffer, out_len);
                     log_debug("Sent close_notify response (%d bytes)", out_len);
@@ -172,7 +172,7 @@ int dtls_recv_and_decrypt(connection_t *conn, const uint8_t *encrypted,
             if (out_len > 0) {
                 io_op_t *op = io_op_alloc(OP_TYPE_UDP_SEND);
                 if (op) {
-                    iouring_submit_udp_send(uring_ctx, op,
+                    iouring_submit_udp_send(uring_ctx, udp_fd, op,
                                           (struct sockaddr *)&conn->addr,
                                           conn->addr_len, buffer, out_len);
                 }
@@ -188,7 +188,7 @@ int dtls_recv_and_decrypt(connection_t *conn, const uint8_t *encrypted,
             if (out_len > 0) {
                 io_op_t *op = io_op_alloc(OP_TYPE_UDP_SEND);
                 if (op) {
-                    iouring_submit_udp_send(uring_ctx, op,
+                    iouring_submit_udp_send(uring_ctx, udp_fd, op,
                                           (struct sockaddr *)&conn->addr,
                                           conn->addr_len, buffer, out_len);
                 }
@@ -289,9 +289,7 @@ int handle_udp_recv(struct io_uring_cqe *cqe, connection_table_t *conn_table,
     int packet_len = cqe->res;
     struct sockaddr *src_addr = (struct sockaddr *)&op->addr;
     
-    char addr_str[64];
-    addr_to_string(src_addr, addr_str, sizeof(addr_str));
-    log_debug("Received %d bytes from %s", packet_len, addr_str);
+    log_debug("Received %d bytes from %s", packet_len, addr_to_string(src_addr));
     
     connection_t *active_conn = conn;
     

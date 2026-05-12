@@ -30,7 +30,8 @@ typedef struct forwarder_connection {
  */
 typedef struct forwarder_ctx {
     // Network components
-    int udp_fd;                      // UDP socket
+    int inbound_udp_fd;              // UDP socket for inbound connections
+    int outbound_udp_fd;             // UDP socket for outbound connections
     iouring_ctx_t *uring_ctx;        // io-uring context
     
     // DTLS contexts
@@ -50,14 +51,16 @@ typedef struct forwarder_ctx {
 
 /**
  * Create forwarder context
- * @param port Local UDP port to bind
+ * @param inbound_port Local UDP port for inbound connections
+ * @param outbound_port Local UDP port for outbound connections
  * @param cert_file Certificate file for server role
  * @param key_file Private key file for server role
  * @param ca_file CA certificate file for client role
  * @return Forwarder context or NULL on failure
  */
-forwarder_ctx_t *forwarder_create(uint16_t port, const char *cert_file,
-                                   const char *key_file, const char *ca_file);
+forwarder_ctx_t *forwarder_create(uint16_t inbound_port, uint16_t outbound_port,
+                                   const char *cert_file, const char *key_file,
+                                   const char *ca_file);
 
 /**
  * Destroy forwarder context

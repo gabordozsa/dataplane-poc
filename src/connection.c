@@ -122,9 +122,8 @@ connection_t* connection_create(connection_table_t *table, SSL *ssl,
     table->buckets[hash] = conn;
     table->conn_count++;
     
-    char addr_str[64];
-    addr_to_string(addr, addr_str, sizeof(addr_str));
-    log_info("Created connection from %s (total: %zu)", addr_str, table->conn_count);
+    log_info("Created connection from %s (total: %zu)",
+             addr_to_string(addr), table->conn_count);
     
     return conn;
 }
@@ -134,8 +133,7 @@ void connection_destroy(connection_table_t *table, connection_t *conn) {
         return;
     }
     
-    char addr_str[64];
-    addr_to_string((struct sockaddr *)&conn->addr, addr_str, sizeof(addr_str));
+    const char *addr_str = addr_to_string((struct sockaddr *)&conn->addr);
     
     // Remove from hash table
     uint32_t hash = addr_hash((struct sockaddr *)&conn->addr, table->bucket_count);
@@ -183,9 +181,8 @@ int connection_cleanup_idle(connection_table_t *table, time_t timeout, void *uri
             connection_t *conn = *curr;
             
             if (now - conn->last_activity > timeout) {
-                char addr_str[64];
-                addr_to_string((struct sockaddr *)&conn->addr, addr_str, sizeof(addr_str));
                 log_info("Cleaning up idle connection from %s (idle for %ld seconds)",
+                         addr_to_string((struct sockaddr *)&conn->addr),
                          addr_str, now - conn->last_activity);
                 
                 // Send close_notify alert before destroying connection

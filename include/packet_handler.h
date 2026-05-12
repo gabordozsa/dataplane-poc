@@ -49,25 +49,28 @@ int handle_udp_send(struct io_uring_cqe *cqe);
 /**
  * Process DTLS handshake
  * @param conn Connection
+ * @param udp_fd UDP socket file descriptor
  * @param uring_ctx io-uring context
  * @return 0 if handshake complete, 1 if in progress, -1 on error
  */
-int process_dtls_handshake(connection_t *conn, iouring_ctx_t *uring_ctx);
+int process_dtls_handshake(connection_t *conn, int udp_fd, iouring_ctx_t *uring_ctx);
 
 /**
  * Encrypt and send packet via DTLS
  * @param conn Connection
+ * @param udp_fd UDP socket file descriptor
  * @param data Plaintext data
  * @param len Data length
  * @param uring_ctx io-uring context
  * @return 0 on success, -1 on failure
  */
-int dtls_encrypt_and_send(connection_t *conn, const uint8_t *data, size_t len,
-                          iouring_ctx_t *uring_ctx);
+int dtls_encrypt_and_send(connection_t *conn, int udp_fd, const uint8_t *data,
+                          size_t len, iouring_ctx_t *uring_ctx);
 
 /**
  * Receive and decrypt packet via DTLS
  * @param conn Connection
+ * @param udp_fd UDP socket file descriptor
  * @param encrypted Encrypted data
  * @param encrypted_len Encrypted data length
  * @param decrypted Buffer for decrypted data
@@ -75,7 +78,7 @@ int dtls_encrypt_and_send(connection_t *conn, const uint8_t *data, size_t len,
  * @param uring_ctx io-uring context
  * @return Number of decrypted bytes on success, -1 on error
  */
-int dtls_recv_and_decrypt(connection_t *conn, const uint8_t *encrypted,
+int dtls_recv_and_decrypt(connection_t *conn, int udp_fd, const uint8_t *encrypted,
                           size_t encrypted_len, uint8_t *decrypted,
                           size_t decrypted_size, iouring_ctx_t *uring_ctx);
 
