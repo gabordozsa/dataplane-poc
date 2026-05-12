@@ -49,6 +49,13 @@ iouring_ctx_t* iouring_init(unsigned queue_depth);
 void iouring_set_fds(iouring_ctx_t *ctx, int tun_fd, int udp_fd);
 
 /**
+ * Set UDP socket file descriptor
+ * @param ctx io-uring context
+ * @param udp_fd UDP socket file descriptor
+ */
+void iouring_set_udp_socket(iouring_ctx_t *ctx, int udp_fd);
+
+/**
  * Submit a TUN read operation
  * @param ctx io-uring context
  * @param op I/O operation context

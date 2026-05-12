@@ -37,6 +37,13 @@ void iouring_set_fds(iouring_ctx_t *ctx, int tun_fd, int udp_fd) {
     }
 }
 
+void iouring_set_udp_socket(iouring_ctx_t *ctx, int udp_fd) {
+    if (ctx) {
+        ctx->udp_fd = udp_fd;
+        log_debug("Set io-uring UDP socket: udp=%d", udp_fd);
+    }
+}
+
 int iouring_submit_tun_read(iouring_ctx_t *ctx, io_op_t *op) {
     if (!ctx || !op || ctx->tun_fd < 0) {
         log_error("Invalid parameters for TUN read");
