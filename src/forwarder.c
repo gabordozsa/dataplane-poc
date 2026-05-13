@@ -189,7 +189,7 @@ forwarder_ctx_t *forwarder_create(uint16_t inbound_port, uint16_t outbound_port,
              outbound_port, ctx->outbound_udp_fd);
     
     // Create io-uring context
-    ctx->uring_ctx = iouring_create(256);
+    ctx->uring_ctx = iouring_init(256);
     if (!ctx->uring_ctx) {
         log_error("Failed to create io-uring context");
         close(ctx->inbound_udp_fd);
@@ -199,10 +199,10 @@ forwarder_ctx_t *forwarder_create(uint16_t inbound_port, uint16_t outbound_port,
     }
     
     // Create server DTLS context (for accepting inbound connections)
-    ctx->server_dtls_ctx = dtls_context_create_server(cert_file, key_file);
+    ctx->server_dtls_ctx = dtls_server_context_init(cert_file, key_file);
     if (!ctx->server_dtls_ctx) {
         log_error("Failed to create server DTLS context");
-        iouring_destroy(ctx->uring_ctx);
+        iouring_cleanup(ctx->uring_ctx);
         close(ctx->inbound_udp_fd);
         close(ctx->outbound_udp_fd);
         free(ctx);
@@ -211,11 +211,11 @@ forwarder_ctx_t *forwarder_create(uint16_t inbound_port, uint16_t outbound_port,
     log_info("Created server DTLS context");
     
     // Create client DTLS context (for initiating outbound connection)
-    ctx->client_dtls_ctx = dtls_context_create_client(ca_file);
+    ctx->client_dtls_ctx = dtls_client_context_init(ca_file);
     if (!ctx->client_dtls_ctx) {
         log_error("Failed to create client DTLS context");
-        dtls_context_destroy(ctx->server_dtls_ctx);
-        iouring_destroy(ctx->uring_ctx);
+        dtls_context_cleanup(ctx->server_dtls_ctx);
+        iouring_cleanup(ctx->uring_ctx);
         close(ctx->inbound_udp_fd);
         close(ctx->outbound_udp_fd);
         free(ctx);
@@ -263,16 +263,16 @@ void forwarder_destroy(forwarder_ctx_t *ctx) {
     
     // Cleanup DTLS contexts
     if (ctx->server_dtls_ctx) {
-        dtls_context_destroy(ctx->server_dtls_ctx);
+        dtls_context_cleanup(ctx->server_dtls_ctx);
     }
     
     if (ctx->client_dtls_ctx) {
-        dtls_context_destroy(ctx->client_dtls_ctx);
+        dtls_context_cleanup(ctx->client_dtls_ctx);
     }
     
     // Cleanup io-uring
     if (ctx->uring_ctx) {
-        iouring_destroy(ctx->uring_ctx);
+        iouring_cleanup(ctx->uring_ctx);
     }
     
     // Close UDP sockets
@@ -328,7 +328,7 @@ int forwarder_connect_outbound(forwarder_ctx_t *ctx, const char *host, uint16_t 
     log_info("Created outbound connection structure");
     
     // Initiate handshake
-    log_info("Starting DTLS handshake with %s", addr_str);
+    log_info("Starting DTLS handshake with %s:%d", host, port);
     int hs_ret = process_dtls_handshake(ctx->outbound.conn, ctx->outbound_udp_fd, ctx->uring_ctx);
     if (hs_ret < 0) {
         log_error("Failed to initiate handshake");
