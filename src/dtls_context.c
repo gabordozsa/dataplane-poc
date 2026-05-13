@@ -204,12 +204,7 @@ int dtls_setup_bio_pair(SSL *ssl, BIO **rbio_ptr, BIO **wbio_ptr) {
     SSL_set_bio(ssl, rbio, wbio);
     
     // NOW set the SSL state after BIOs are attached
-    // Check if this is a server or client based on SSL_CTX
-    SSL_CTX *ctx = SSL_get_SSL_CTX(ssl);
-    const SSL_METHOD *method = SSL_CTX_get_ssl_method(ctx);
-    
-    // Determine if server or client based on method
-    // For DTLS, check if it's a server or client method
+    // Determine if server or client based on SSL state
     if (SSL_is_server(ssl)) {
         SSL_set_accept_state(ssl);
         log_debug("Set SSL to accept state (server)");
