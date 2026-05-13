@@ -574,15 +574,16 @@ int forwarder_run(forwarder_ctx_t *ctx) {
 }
 
 int main(int argc, char **argv) {
-    if (argc < 8) {
-        fprintf(stderr, "Usage: %s <inbound_port> <outbound_port> <cert_file> <key_file> <ca_file> <remote_host> <remote_port>\n", argv[0]);
-        fprintf(stderr, "Example: %s 5000 5001 cert.pem key.pem ca.pem server.example.com 4433\n", argv[0]);
+    if (argc < 7) {
+        fprintf(stderr, "Usage: %s <inbound_port> <outbound_port> <cert_file> <key_file> <remote_host> <remote_port> [ca_file]\n", argv[0]);
+        fprintf(stderr, "Example: %s 5000 5001 cert.pem key.pem server.example.com 4433 [ca.pem]\n", argv[0]);
         fprintf(stderr, "\n");
         fprintf(stderr, "The forwarder:\n");
         fprintf(stderr, "  - Listens on <inbound_port> for inbound DTLS connections\n");
         fprintf(stderr, "  - Uses <outbound_port> for outbound DTLS connection\n");
         fprintf(stderr, "  - Connects to <remote_host>:<remote_port> as outbound DTLS connection\n");
         fprintf(stderr, "  - Forwards IP packets between the two DTLS sessions\n");
+        fprintf(stderr, "  - [ca_file] is optional for client certificate verification\n");
         return 1;
     }
     
@@ -590,9 +591,9 @@ int main(int argc, char **argv) {
     uint16_t outbound_port = atoi(argv[2]);
     const char *cert_file = argv[3];
     const char *key_file = argv[4];
-    const char *ca_file = argv[5];
-    const char *remote_host = argv[6];
-    uint16_t remote_port = atoi(argv[7]);
+    const char *remote_host = argv[5];
+    uint16_t remote_port = atoi(argv[6]);
+    const char *ca_file = (argc > 7) ? argv[7] : NULL;
     
     // Set up signal handlers
     signal(SIGINT, signal_handler);
@@ -605,7 +606,7 @@ int main(int argc, char **argv) {
     log_info("Outbound port: %d", outbound_port);
     log_info("Certificate: %s", cert_file);
     log_info("Private key: %s", key_file);
-    log_info("CA certificate: %s", ca_file);
+    log_info("CA certificate: %s", ca_file ? ca_file : "none (no client verification)");
     log_info("Remote endpoint: %s:%d", remote_host, remote_port);
     
     // Create forwarder context

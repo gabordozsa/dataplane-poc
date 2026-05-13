@@ -10,6 +10,8 @@ SERVER_IP=192.168.100.2
 
 FORWARD_IP_1=192.168.100.3
 FORWARD_IP_2=192.168.100.4
+FORWARD_IN_PORT=5000
+FORWARD_OUT_PORT=5010
 
 # Cleanup any existing setup
 sudo ip netns del client 2>/dev/null || true
@@ -69,16 +71,18 @@ echo ""
 echo "Network namespaces setup complete!"
 echo ""
 echo "Network topology:"
-echo "  client namespace: ${CLIENT_IP} (veth0)"
-echo "  server namespace: ${SERVER_IP} (veth1)"
+echo "  client  namespace: ${CLIENT_IP} (veth0)"
+echo "  server  namespace: ${SERVER_IP} (veth3)"
+echo "  forward namespace: ${FORWARD_IP_1} (veth1) ${FORWARD_IP_2} (veth2)"
 echo ""
 echo "To run the server:"
 echo "  sudo ip netns exec server ./build/vpn_server 4433 certs/server_cert.pem certs/server_key.pem 10.9.0.254"
 echo ""
 echo "To run the forwarder:"
-echo "  sudo ip netns exec forwarder ./build/dtls_forwarder 5000 certs/cert.pem certs/key.pem certs/ca.pem ${SERVER_IP} 4433"
+echo "  sudo ip netns exec forward ./build/dtls_forwarder ${FORWARD_IN_PORT} ${FORWARD_OUT_PORT}  certs/forwarder_cert.pem certs/forwarder_key.pem  ${SERVER_IP} 4433"
+echo ""
 echo "To run the client (in another terminal):"
-echo "  sudo ip netns exec client ./build/vpn_client ${FORWARD_IP_1} 5000 10.8.0.1"
+echo "  sudo ip netns exec client ./build/vpn_client ${FORWARD_IP_1} ${FORWARD_IN_PORT}  10.8.0.1"
 echo ""
 echo "Create route for client (-> to make rp_filter happy, i.e. server TUN addr can be accessed via tun0):"
 echo "  sudo ip netns exec client ip route add 10.9.0.0/24 dev tun0"
