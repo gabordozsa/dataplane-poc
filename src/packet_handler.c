@@ -202,7 +202,7 @@ int dtls_recv_and_decrypt(connection_t *conn, int udp_fd, const uint8_t *encrypt
 }
 
 int handle_tun_read(struct io_uring_cqe *cqe, connection_t *conn,
-                    iouring_ctx_t *uring_ctx) {
+                    int udp_fd, iouring_ctx_t *uring_ctx) {
     if (!cqe || !conn || !uring_ctx) {
         return -1;
     }
@@ -245,7 +245,7 @@ int handle_tun_read(struct io_uring_cqe *cqe, connection_t *conn,
     
     // Encrypt and send
     if (conn->state == CONN_STATE_ESTABLISHED) {
-        dtls_encrypt_and_send(conn, op->buffer, packet_len, uring_ctx);
+        dtls_encrypt_and_send(conn, udp_fd, op->buffer, packet_len, uring_ctx);
     } else {
         log_debug("Connection not established, dropping packet");
     }
@@ -263,7 +263,7 @@ int handle_tun_read(struct io_uring_cqe *cqe, connection_t *conn,
 
 int handle_udp_recv(struct io_uring_cqe *cqe, connection_table_t *conn_table,
                     connection_t *conn, dtls_ctx_t *dtls_ctx,
-                    iouring_ctx_t *uring_ctx) {
+                    int udp_fd, iouring_ctx_t *uring_ctx) {
     if (!cqe || !uring_ctx) {
         return -1;
     }
@@ -301,13 +301,14 @@ int handle_udp_recv(struct io_uring_cqe *cqe, connection_table_t *conn_table,
             // Check if this is a DTLS alert (close_notify response from deleted connection)
             // DTLS alerts are typically small (< 50 bytes) and start with content type 0x15
             if (packet_len > 0 && packet_len < 50 && op->buffer[0] == 0x15) {
-                log_debug("Received DTLS alert from unknown connection %s (likely close_notify response), ignoring", addr_str);
+                log_debug("Received DTLS alert from unknown connection %s (likely close_notify response), ignoring",
+                         addr_to_string(src_addr));
                 io_op_free(op);
                 goto resubmit;
             }
             
             // New connection
-            log_info("New connection from %s", addr_str);
+            log_info("New connection from %s", addr_to_string(src_addr));
             
             SSL *ssl = dtls_create_ssl(dtls_ctx);
             if (!ssl) {
@@ -356,7 +357,7 @@ int handle_udp_recv(struct io_uring_cqe *cqe, connection_table_t *conn_table,
         
         // Process handshake - call once, not in a loop
         // DTLS handshake is asynchronous and may need multiple packets
-        int hs_result = process_dtls_handshake(active_conn, uring_ctx);
+        int hs_result = process_dtls_handshake(active_conn, udp_fd, uring_ctx);
         
         if (hs_result < 0) {
             log_error("Handshake failed for connection");
@@ -366,7 +367,7 @@ int handle_udp_recv(struct io_uring_cqe *cqe, connection_table_t *conn_table,
     } else if (active_conn->state == CONN_STATE_ESTABLISHED) {
         // Decrypt and write to TUN
         uint8_t decrypted[PACKET_BUFFER_SIZE];
-        int decrypted_len = dtls_recv_and_decrypt(active_conn, op->buffer,
+        int decrypted_len = dtls_recv_and_decrypt(active_conn, udp_fd, op->buffer,
                                                   packet_len, decrypted,
                                                   sizeof(decrypted), uring_ctx);
         
@@ -394,7 +395,7 @@ resubmit:
     // Resubmit UDP receive
     io_op_t *new_op = io_op_alloc(OP_TYPE_UDP_RECV);
     if (new_op) {
-        iouring_submit_udp_recv(uring_ctx, new_op);
+        iouring_submit_udp_recv(uring_ctx, udp_fd, new_op);
     }
     
     return 0;

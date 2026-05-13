@@ -12,11 +12,12 @@
  * For server: encrypt and send to appropriate client
  * @param cqe Completion queue entry
  * @param conn Connection (NULL for client single connection)
+ * @param udp_fd UDP socket file descriptor
  * @param uring_ctx io-uring context
  * @return 0 on success, -1 on failure
  */
 int handle_tun_read(struct io_uring_cqe *cqe, connection_t *conn,
-                    iouring_ctx_t *uring_ctx);
+                    int udp_fd, iouring_ctx_t *uring_ctx);
 
 /**
  * Handle UDP receive completion (encrypted packet from network)
@@ -25,12 +26,13 @@ int handle_tun_read(struct io_uring_cqe *cqe, connection_t *conn,
  * @param conn_table Connection table (NULL for client)
  * @param conn Single connection (for client, NULL for server)
  * @param dtls_ctx DTLS context (for creating new connections on server)
+ * @param udp_fd UDP socket file descriptor
  * @param uring_ctx io-uring context
  * @return 0 on success, -1 on failure
  */
 int handle_udp_recv(struct io_uring_cqe *cqe, connection_table_t *conn_table,
                     connection_t *conn, dtls_ctx_t *dtls_ctx,
-                    iouring_ctx_t *uring_ctx);
+                    int udp_fd, iouring_ctx_t *uring_ctx);
 
 /**
  * Handle TUN write completion
