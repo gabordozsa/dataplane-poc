@@ -21,6 +21,104 @@ static void signal_handler(int signum) {
     running = 0;
 }
 
+/**
+ * Initiate DTLS handshake and send initial ClientHello
+ * @param ssl SSL object
+ * @param wbio Write BIO
+ * @param rbio Read BIO
+ * @param server_addr Server address
+ * @param udp_fd UDP socket file descriptor
+ * @param uring_ctx io-uring context
+ * @return 0 on success, -1 on failure
+ */
+static int initiate_dtls_handshake(SSL *ssl, BIO *wbio, BIO *rbio,
+                                   struct sockaddr_in *server_addr,
+                                   int udp_fd, iouring_ctx_t *uring_ctx) {
+    log_info("Initiating DTLS handshake...");
+    
+    // Clear any previous errors
+    ERR_clear_error();
+    
+    // Call SSL_do_handshake to initiate the handshake
+    int hs_ret = SSL_do_handshake(ssl);
+    int ssl_err = SSL_get_error(ssl, hs_ret);
+    log_debug("SSL_do_handshake returned: %d, SSL error: %d (%s)",
+              hs_ret, ssl_err, dtls_get_error_string(ssl, hs_ret));
+    
+    // If there's an SSL error, print the error queue
+    if (ssl_err == SSL_ERROR_SSL) {
+        log_error("SSL protocol error occurred:");
+        ERR_print_errors_fp(stderr);
+    }
+    
+    // For DTLS client, we expect SSL_ERROR_WANT_WRITE or SSL_ERROR_WANT_READ
+    // Check if SSL generated any data to send
+    int pending = BIO_ctrl_pending(wbio);
+    log_debug("BIO wbio pending bytes: %d", pending);
+    
+    // Also check rbio
+    int rbio_pending = BIO_ctrl_pending(rbio);
+    log_debug("BIO rbio pending bytes: %d", rbio_pending);
+    
+    if (pending > 0) {
+        uint8_t buffer[PACKET_BUFFER_SIZE];
+        int read = BIO_read(wbio, buffer, sizeof(buffer));
+        log_info("Read %d bytes from wbio for initial handshake", read);
+        
+        // Dump all bytes to see what's being sent
+        if (read > 0) {
+            char hex_str[256] = {0};
+            int offset = 0;
+            for (int i = 0; i < read && i < 20; i++) {
+                offset += snprintf(hex_str + offset, sizeof(hex_str) - offset, "%02x ", buffer[i]);
+            }
+            log_debug("All %d bytes: %s", read, hex_str);
+            
+            // Decode the message type
+            if (buffer[0] == 0x16) {
+                log_info("Message type: Handshake (0x16) - GOOD!");
+            } else if (buffer[0] == 0x15) {
+                log_error("Message type: Alert (0x15) - SSL ERROR!");
+                if (read >= 5) {
+                    log_error("Alert level: %d, description: %d", buffer[3], buffer[4]);
+                }
+            } else {
+                log_warn("Message type: Unknown (0x%02x)", buffer[0]);
+            }
+        }
+        
+        if (read > 0) {
+            io_op_t *op = io_op_alloc(OP_TYPE_UDP_SEND);
+            if (op) {
+                int submit_ret = iouring_submit_udp_send(uring_ctx, udp_fd, op,
+                                      (struct sockaddr *)server_addr,
+                                      sizeof(*server_addr), buffer, read);
+                log_info("Submitted initial ClientHello: %d bytes (ret=%d)", read, submit_ret);
+                return 0;
+            } else {
+                log_error("Failed to allocate op for initial handshake send");
+                return -1;
+            }
+        }
+    } else {
+        log_error("No data to send after SSL_do_handshake - handshake not initiated!");
+        log_error("This usually means the BIO pair is not set up correctly");
+        
+        // Try to diagnose the issue
+        log_debug("SSL state: %s", SSL_state_string_long(ssl));
+        log_debug("SSL is_init_finished: %d", SSL_is_init_finished(ssl));
+        
+        // Check if BIOs are properly connected
+        BIO *ssl_rbio = SSL_get_rbio(ssl);
+        BIO *ssl_wbio = SSL_get_wbio(ssl);
+        log_debug("SSL rbio: %p, wbio: %p", (void*)ssl_rbio, (void*)ssl_wbio);
+        log_debug("Our rbio: %p, wbio: %p", (void*)rbio, (void*)wbio);
+        return -1;
+    }
+    
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc < 3) {
         fprintf(stderr, "Usage: %s <server_ip> <server_port> [tun_ip] [ca_cert]\n", argv[0]);
@@ -144,83 +242,14 @@ int main(int argc, char **argv) {
     log_info("Connecting to server...");
     
     // Start DTLS handshake
-    log_info("Initiating DTLS handshake...");
-    
-    // Clear any previous errors
-    ERR_clear_error();
-    
-    // Call SSL_do_handshake to initiate the handshake
-    int hs_ret = SSL_do_handshake(ssl);
-    int ssl_err = SSL_get_error(ssl, hs_ret);
-    log_debug("SSL_do_handshake returned: %d, SSL error: %d (%s)",
-              hs_ret, ssl_err, dtls_get_error_string(ssl, hs_ret));
-    
-    // If there's an SSL error, print the error queue
-    if (ssl_err == SSL_ERROR_SSL) {
-        log_error("SSL protocol error occurred:");
-        ERR_print_errors_fp(stderr);
-    }
-    
-    // For DTLS client, we expect SSL_ERROR_WANT_WRITE or SSL_ERROR_WANT_READ
-    // Check if SSL generated any data to send
-    int pending = BIO_ctrl_pending(wbio);
-    log_debug("BIO wbio pending bytes: %d", pending);
-    
-    // Also check rbio
-    int rbio_pending = BIO_ctrl_pending(rbio);
-    log_debug("BIO rbio pending bytes: %d", rbio_pending);
-    
-    if (pending > 0) {
-        uint8_t buffer[PACKET_BUFFER_SIZE];
-        int read = BIO_read(wbio, buffer, sizeof(buffer));
-        log_info("Read %d bytes from wbio for initial handshake", read);
-        
-        // Dump all bytes to see what's being sent
-        if (read > 0) {
-            char hex_str[256] = {0};
-            int offset = 0;
-            for (int i = 0; i < read && i < 20; i++) {
-                offset += snprintf(hex_str + offset, sizeof(hex_str) - offset, "%02x ", buffer[i]);
-            }
-            log_debug("All %d bytes: %s", read, hex_str);
-            
-            // Decode the message type
-            if (buffer[0] == 0x16) {
-                log_info("Message type: Handshake (0x16) - GOOD!");
-            } else if (buffer[0] == 0x15) {
-                log_error("Message type: Alert (0x15) - SSL ERROR!");
-                if (read >= 5) {
-                    log_error("Alert level: %d, description: %d", buffer[3], buffer[4]);
-                }
-            } else {
-                log_warn("Message type: Unknown (0x%02x)", buffer[0]);
-            }
-        }
-        
-        if (read > 0) {
-            io_op_t *op = io_op_alloc(OP_TYPE_UDP_SEND);
-            if (op) {
-                int submit_ret = iouring_submit_udp_send(uring_ctx, udp_fd, op,
-                                      (struct sockaddr *)&server_addr,
-                                      sizeof(server_addr), buffer, read);
-                log_info("Submitted initial ClientHello: %d bytes (ret=%d)", read, submit_ret);
-            } else {
-                log_error("Failed to allocate op for initial handshake send");
-            }
-        }
-    } else {
-        log_error("No data to send after SSL_do_handshake - handshake not initiated!");
-        log_error("This usually means the BIO pair is not set up correctly");
-        
-        // Try to diagnose the issue
-        log_debug("SSL state: %s", SSL_state_string_long(ssl));
-        log_debug("SSL is_init_finished: %d", SSL_is_init_finished(ssl));
-        
-        // Check if BIOs are properly connected
-        BIO *ssl_rbio = SSL_get_rbio(ssl);
-        BIO *ssl_wbio = SSL_get_wbio(ssl);
-        log_debug("SSL rbio: %p, wbio: %p", (void*)ssl_rbio, (void*)ssl_wbio);
-        log_debug("Our rbio: %p, wbio: %p", (void*)rbio, (void*)wbio);
+    if (initiate_dtls_handshake(ssl, wbio, rbio, &server_addr, udp_fd, uring_ctx) < 0) {
+        log_error("Failed to initiate DTLS handshake");
+        SSL_free(ssl);
+        dtls_context_cleanup(dtls_ctx);
+        iouring_cleanup(uring_ctx);
+        udp_socket_close(udp_fd);
+        tun_device_destroy(tun);
+        return 1;
     }
     
     // Submit initial UDP receive operations
