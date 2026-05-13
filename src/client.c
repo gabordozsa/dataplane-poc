@@ -88,7 +88,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     
-    iouring_set_fds(uring_ctx, tun_device_get_fd(tun), udp_fd);
+    iouring_set_tun_fd(uring_ctx, tun_device_get_fd(tun));
     
     // Initialize DTLS client context
     dtls_ctx_t *dtls_ctx = dtls_client_context_init(ca_cert);
@@ -200,7 +200,7 @@ int main(int argc, char **argv) {
         if (read > 0) {
             io_op_t *op = io_op_alloc(OP_TYPE_UDP_SEND);
             if (op) {
-                int submit_ret = iouring_submit_udp_send(uring_ctx, op,
+                int submit_ret = iouring_submit_udp_send(uring_ctx, udp_fd, op,
                                       (struct sockaddr *)&server_addr,
                                       sizeof(server_addr), buffer, read);
                 log_info("Submitted initial ClientHello: %d bytes (ret=%d)", read, submit_ret);
@@ -229,7 +229,7 @@ int main(int argc, char **argv) {
     for (int i = 0; i < 4; i++) {
         io_op_t *op = io_op_alloc(OP_TYPE_UDP_RECV);
         if (op) {
-            int ret = iouring_submit_udp_recv(uring_ctx, op);
+            int ret = iouring_submit_udp_recv(uring_ctx, udp_fd, op);
             if (ret == 0) {
                 recv_submitted++;
             } else {
@@ -266,11 +266,11 @@ int main(int argc, char **argv) {
         // Process based on operation type
         switch (op->op_type) {
             case OP_TYPE_TUN_READ:
-                handle_tun_read(cqe, &conn, uring_ctx);
+                handle_tun_read(cqe, &conn, udp_fd, uring_ctx);
                 break;
                 
             case OP_TYPE_UDP_RECV:
-                handle_udp_recv(cqe, NULL, &conn, NULL, uring_ctx);
+                handle_udp_recv(cqe, NULL, &conn, NULL, udp_fd, uring_ctx);
                 
                 // Check if connection was closed by server
                 if (conn.state == CONN_STATE_CLOSING) {
