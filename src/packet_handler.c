@@ -337,7 +337,7 @@ int handle_udp_recv(struct io_uring_cqe *cqe, connection_table_t *conn_table,
     }
     
     if (!active_conn) {
-        log_warn("No connection for packet from %s", addr_str);
+        log_warn("No connection for packet from %s", addr_to_string(src_addr));
         io_op_free(op);
         goto resubmit;
     }
@@ -392,6 +392,7 @@ int handle_udp_recv(struct io_uring_cqe *cqe, connection_table_t *conn_table,
     io_op_free(op);
     
 resubmit:
+    ;  // Empty statement to satisfy C syntax (label must be followed by a statement)
     // Resubmit UDP receive
     io_op_t *new_op = io_op_alloc(OP_TYPE_UDP_RECV);
     if (new_op) {
