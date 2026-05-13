@@ -23,6 +23,7 @@ static void signal_handler(int signum) {
 static void process_io_operation(struct io_uring_cqe *cqe, io_op_t *op,
                                   connection_table_t *conn_table,
                                   dtls_ctx_t *dtls_ctx,
+                                  int udp_fd,
                                   iouring_ctx_t *uring_ctx) {
     // Process based on operation type
     switch (op->op_type) {
@@ -45,7 +46,7 @@ static void process_io_operation(struct io_uring_cqe *cqe, io_op_t *op,
                         
                         if (target_conn) {
                             // Route to specific client
-                            dtls_encrypt_and_send(target_conn, op->buffer, packet_len, uring_ctx);
+                            dtls_encrypt_and_send(target_conn, udp_fd, op->buffer, packet_len, uring_ctx);
                             
                             struct in_addr addr;
                             addr.s_addr = dest_ip;
@@ -67,7 +68,7 @@ static void process_io_operation(struct io_uring_cqe *cqe, io_op_t *op,
                             connection_t *conn = conn_table->buckets[i];
                             while (conn) {
                                 if (conn->state == CONN_STATE_ESTABLISHED) {
-                                    dtls_encrypt_and_send(conn, op->buffer, packet_len, uring_ctx);
+                                    dtls_encrypt_and_send(conn, udp_fd, op->buffer, packet_len, uring_ctx);
                                     sent_count++;
                                 }
                                 conn = conn->next;
@@ -100,7 +101,7 @@ static void process_io_operation(struct io_uring_cqe *cqe, io_op_t *op,
             break;
             
         case OP_TYPE_UDP_RECV:
-            handle_udp_recv(cqe, conn_table, NULL, dtls_ctx, uring_ctx);
+            handle_udp_recv(cqe, conn_table, NULL, dtls_ctx, udp_fd, uring_ctx);
             break;
             
         case OP_TYPE_TUN_WRITE:
@@ -195,7 +196,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     
-    iouring_set_fds(uring_ctx, tun_device_get_fd(tun), udp_fd);
+    iouring_set_tun_fd(uring_ctx, tun_device_get_fd(tun));
     
     // Initialize DTLS server context
     dtls_ctx_t *dtls_ctx = dtls_server_context_init(cert_file, key_file);
@@ -222,7 +223,7 @@ int main(int argc, char **argv) {
     for (int i = 0; i < 8; i++) {
         io_op_t *op = io_op_alloc(OP_TYPE_UDP_RECV);
         if (op) {
-            iouring_submit_udp_recv(uring_ctx, op);
+            iouring_submit_udp_recv(uring_ctx, udp_fd, op);
         }
     }
     
@@ -269,20 +270,23 @@ int main(int argc, char **argv) {
         }
         
         // Process the I/O operation
-        process_io_operation(cqe, op, conn_table, dtls_ctx, uring_ctx);
+        process_io_operation(cqe, op, conn_table, dtls_ctx, udp_fd, uring_ctx);
         
         iouring_cqe_seen(uring_ctx, cqe);
         
 periodic_tasks:
         // Periodic cleanup of idle connections
         // This runs after processing each event OR on timeout (every 1 second)
-        time_t now = time(NULL);
-        if (now - last_cleanup > 30) {
-            int cleaned = connection_cleanup_idle(conn_table, 60, uring_ctx);
-            if (cleaned > 0) {
-                log_info("Cleaned up %d idle connections", cleaned);
+        {
+            time_t now = time(NULL);
+            if (now - last_cleanup > 30) {
+                // TODO: Implement connection_cleanup_idle function
+                // int cleaned = connection_cleanup_idle(conn_table, 60, uring_ctx);
+                // if (cleaned > 0) {
+                //     log_info("Cleaned up %d idle connections", cleaned);
+                // }
+                last_cleanup = now;
             }
-            last_cleanup = now;
         }
     }
     
