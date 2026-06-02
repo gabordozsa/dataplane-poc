@@ -18,15 +18,15 @@ typedef struct connection {
     SSL *ssl;
     BIO *rbio;  // Read BIO (network → SSL)
     BIO *wbio;  // Write BIO (SSL → network)
-    
+
     struct sockaddr_storage addr;  // UDP address (IP:port)
     socklen_t addr_len;
-    
+
     uint32_t tunnel_ip;  // Client's VPN tunnel IP (network byte order)
-    
+
     conn_state_t state;
     time_t last_activity;
-    
+
     struct connection *next;  // For hash table chaining
 } connection_t;
 

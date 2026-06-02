@@ -1,12 +1,15 @@
 #include "udp_socket.h"
 #include "utils.h"
+#include <sys/types.h>
 #include <sys/socket.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
 #include <errno.h>
+#include <stdio.h>
 
 int udp_socket_create(void) {
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -100,4 +103,24 @@ void udp_socket_close(int fd) {
     }
 }
 
+int resolve_hostname(const char *host, uint16_t port, struct sockaddr *addr, socklen_t *addr_len) {
+    struct addrinfo hints, *result;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+
+    char port_str[16];
+    snprintf(port_str, sizeof(port_str), "%d", port);
+
+    int ret = getaddrinfo(host, port_str, &hints, &result);
+    if (ret != 0) {
+        log_error("Failed to resolve %s: %s", host, gai_strerror(ret));
+        return -1;
+    }
+    // Copy address
+    memcpy(addr, result->ai_addr, result->ai_addrlen);
+    *addr_len = result->ai_addrlen;
+    freeaddrinfo(result);
+    return 0;
+}
 // Made with Bob

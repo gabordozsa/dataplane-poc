@@ -3,7 +3,7 @@
 
 set -e
 
-echo "Setting up network namespaces for DTLS VPN testing..."
+echo "Setting up network namespaces for TUN/DTLS  testing..."
 
 CLIENT_IP=192.168.100.1
 SERVER_IP=192.168.100.2
@@ -96,7 +96,7 @@ echo "To run HTTP server in server namespace:"
 echo "  sudo ip netns exec server python3 -m http.server --bind 10.9.0.254 2222"
 echo ""
 echo "To test HTTP (from client namespace):"
-echo "  sudo ip netns exec client curl -v --interface tun0 http://10.9.0.254:2222"
+echo "  sudo ip netns exec client curl -v http://10.9.0.254:2222"
 echo ""
 echo "To cleanup:"
 echo "  ./cleanup_test_env.sh"

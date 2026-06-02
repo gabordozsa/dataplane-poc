@@ -14,15 +14,22 @@ typedef enum {
     FORWARDER_ROLE_SERVER   // Accepts connection (inbound)
 } forwarder_role_t;
 
+static char *FORWARDER_ROLE_STR[] = {"CLIENT", "SERVER"};
+
 /**
  * Forwarder connection state
  */
 typedef struct forwarder_connection {
-    connection_t *conn;           // DTLS connection
+    int udp_fd;
+    dtls_ctx_t *dtls_ctx;
+    connection_t dtls_conn;       // DTLS connection
     forwarder_role_t role;        // Client or server role
-    struct sockaddr_storage addr; // Remote address
-    socklen_t addr_len;           // Address length
+    //struct sockaddr_storage addr; // Remote address
+    //socklen_t addr_len;           // Address length
     int established;              // Connection established flag
+    // statistics
+    uint64_t packets_forwarded;
+    uint64_t bytes_forwarded;
 } forwarder_connection_t;
 
 /**
@@ -30,27 +37,17 @@ typedef struct forwarder_connection {
  */
 typedef struct forwarder_ctx {
     // Network components
-    int inbound_udp_fd;              // UDP socket for inbound connections
-    int outbound_udp_fd;             // UDP socket for outbound connections
     iouring_ctx_t *uring_ctx;        // io-uring context
-    
-    // DTLS contexts
-    dtls_ctx_t *client_dtls_ctx;     // For outbound connection
-    dtls_ctx_t *server_dtls_ctx;     // For inbound connection
-    
+
     // Two connections
-    forwarder_connection_t outbound;  // Connection we initiate
-    forwarder_connection_t inbound;   // Connection we accept
-    
-    // Statistics
-    uint64_t packets_forwarded_out;   // Packets forwarded to outbound
-    uint64_t packets_forwarded_in;    // Packets forwarded to inbound
-    uint64_t bytes_forwarded_out;     // Bytes forwarded to outbound
-    uint64_t bytes_forwarded_in;      // Bytes forwarded to inbound
+    forwarder_connection_t *outbound;  // Connection we initiate
+    forwarder_connection_t *inbound;   // Connection we accept
 } forwarder_ctx_t;
 
 /**
  * Create forwarder context
+ * @param remote_host Outbound UDP connection target host
+ * @param remote_port Outbound UDP connection target port
  * @param inbound_port Local UDP port for inbound connections
  * @param outbound_port Local UDP port for outbound connections
  * @param cert_file Certificate file for server role
@@ -58,9 +55,10 @@ typedef struct forwarder_ctx {
  * @param ca_file CA certificate file for client role
  * @return Forwarder context or NULL on failure
  */
-forwarder_ctx_t *forwarder_create(uint16_t inbound_port, uint16_t outbound_port,
-                                   const char *cert_file, const char *key_file,
-                                   const char *ca_file);
+forwarder_ctx_t *forwarder_create(const char *remote_host, uint16_t remote_port,
+                                  uint16_t inbound_port, uint16_t outbound_port,
+                                  const char *cert_file, const char *key_file,
+                                  const char *ca_file);
 
 /**
  * Destroy forwarder context
@@ -103,6 +101,32 @@ int forwarder_forward_packet(forwarder_ctx_t *ctx,
  * @param ctx Forwarder context
  */
 void forwarder_print_stats(forwarder_ctx_t *ctx);
+
+/**
+ * Decrypt udp packet payload
+ */
+int dtls_decrypt_packet(connection_t *dtls,
+                        const uint8_t *encrypted, int encrypted_len,
+                        uint8_t *decrypted, int decrypted_len);
+
+/**
+ * Encrypt udp packet payload
+ */
+int dtls_encrypt_packet(connection_t *dtls,
+                        const uint8_t *data, int data_len,
+                        uint8_t *result, int result_size);
+
+/**
+ * Receive a udp packet by uring
+ */
+io_op_t *recv_udp(iouring_ctx_t *uring_ctx);
+
+/**
+ * Send a udp packet by uring
+ */
+int send_udp(iouring_ctx_t *uring_ctx, forwarder_connection_t *conn,
+             const uint8_t *encrypted, int encrypted_len);
+
 
 #endif // FORWARDER_H
 

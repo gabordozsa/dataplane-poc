@@ -20,6 +20,7 @@ typedef struct {
     void *user_data;
     int udp_fd;  // UDP socket file descriptor for this operation
     uint8_t buffer[PACKET_BUFFER_SIZE];
+    int data_len;
     struct msghdr msg;
     struct iovec iov;
     struct sockaddr_storage addr;

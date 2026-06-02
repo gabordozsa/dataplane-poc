@@ -39,6 +39,11 @@ int udp_socket_set_options(int fd);
  */
 void udp_socket_close(int fd);
 
+/**
+ * Resolve hostname
+ */
+int resolve_hostname(const char *host, uint16_t port, struct sockaddr *addr, socklen_t *addr_len);
+
 #endif // UDP_SOCKET_H
 
 // Made with Bob

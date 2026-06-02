@@ -94,8 +94,6 @@ dtls_ctx_t* dtls_server_context_init(const char *cert_file, const char *key_file
     SSL_CTX_set_cookie_generate_cb(dtls_ctx->ctx, generate_cookie);
     SSL_CTX_set_cookie_verify_cb(dtls_ctx->ctx, verify_cookie);
     
-    // Set read ahead for DTLS
-    SSL_CTX_set_read_ahead(dtls_ctx->ctx, 1);
     
     log_info("Initialized DTLS server context");
     
@@ -143,9 +141,6 @@ dtls_ctx_t* dtls_client_context_init(const char *ca_file) {
         free(dtls_ctx);
         return NULL;
     }
-    
-    // Set read ahead for DTLS
-    SSL_CTX_set_read_ahead(dtls_ctx->ctx, 1);
     
     log_info("Initialized DTLS client context");
     

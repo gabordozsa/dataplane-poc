@@ -186,6 +186,9 @@ int iouring_submit_udp_send(iouring_ctx_t *ctx, int udp_fd, io_op_t *op,
     if (ret < 0) {
         log_error("Failed to submit UDP send: %s", strerror(-ret));
         return -1;
+    } else if (ret == 0) {
+        log_error("Failed to submit UDP send, ret=0");
+        return -1;
     }
     
     log_debug("Submitted UDP send operation on fd=%d: %zu bytes to %s",
