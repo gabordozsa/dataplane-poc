@@ -1,5 +1,6 @@
 #!/bin/bash
-# Setup script for testing DTLS VPN with network namespaces
+# Setup script for testing DTLS VPN with network namespaces, with 1 forwarder:
+# client -> forward -> server
 
 set -e
 

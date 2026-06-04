@@ -37,12 +37,12 @@ io_op_t *wait_for_recv(iouring_ctx_t *uring_ctx) {
         // Process based on operation type
         switch (op->op_type) {
             case OP_TYPE_UDP_RECV:
-                log_debug("UDP received %d bytes", op->data_len);
+                log_debug("UDP received %d bytes, fd %d", op->data_len, op->fd);
                 ret = iouring_resubmit_recv(uring_ctx, op);
                 done = true;
                 break;
             case OP_TYPE_UDP_SEND:
-                log_debug("UDP sent %d bytes", op->data_len);
+                log_debug("UDP sent %d bytes, fd %d", op->data_len, op->fd);
                 io_op_free(op);
                 break;
             case OP_TYPE_TUN_READ:
