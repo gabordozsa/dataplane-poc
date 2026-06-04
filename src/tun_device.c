@@ -247,4 +247,24 @@ void tun_device_destroy(tun_device_t *tun) {
     }
 }
 
+
+ tun_device_t *new_tun_device(const char *ifname, const char *ip, const char *netmask, int mtu) {
+     tun_device_t *tun = tun_device_create(ifname);
+    if (!tun) {
+        log_error("Failed to create TUN device %s", ifname);
+        return NULL;
+    }
+    if (tun_device_configure(tun, ip, netmask, mtu) < 0) {
+        log_error("Failed to configure TUN device %s (ip:%s netmask:%s mtu:%d)",
+                   ifname, ip, netmask, mtu);
+        tun_device_destroy(tun);
+        return NULL;
+    }
+     if (tun_device_up(tun) < 0) {
+        log_error("Failed to bring TUN device %s up", ifname);
+        tun_device_destroy(tun);
+        return NULL;
+    }
+    return tun;
+}
 // Made with Bob

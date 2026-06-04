@@ -4,6 +4,29 @@
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
+#include <assert.h>
+
+const char *op_type_str(int op_type)
+{
+    switch (op_type)
+    {
+    case OP_TYPE_TUN_READ:
+        return "TUN read";
+        break;
+    case OP_TYPE_TUN_WRITE:
+        return "TUN write";
+        break;
+    case OP_TYPE_UDP_RECV:
+        return "UDP recv";
+        break;
+    case OP_TYPE_UDP_SEND:
+        return "UDP send";
+        break;
+    default:
+        break;
+    }
+    return "UNKNOWN";
+}
 
 iouring_ctx_t* iouring_init(unsigned queue_depth) {
     iouring_ctx_t *ctx = calloc(1, sizeof(iouring_ctx_t));
@@ -36,72 +59,72 @@ void iouring_set_tun_fd(iouring_ctx_t *ctx, int tun_fd) {
 }
 
 int iouring_submit_tun_read(iouring_ctx_t *ctx, io_op_t *op) {
-    if (!ctx || !op || ctx->tun_fd < 0) {
+    if (!ctx || !op) {
         log_error("Invalid parameters for TUN read");
         return -1;
     }
-    
+
     struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
     if (!sqe) {
         log_error("Failed to get SQE for TUN read");
         return -1;
     }
-    
-    op->op_type = OP_TYPE_TUN_READ;
-    
+
+    assert(op->op_type == OP_TYPE_TUN_READ);
+
     // Prepare read operation
-    io_uring_prep_read(sqe, ctx->tun_fd, op->buffer, PACKET_BUFFER_SIZE, 0);
+    io_uring_prep_read(sqe, op->fd, op->buffer, PACKET_BUFFER_SIZE, 0);
     io_uring_sqe_set_data(sqe, op);
-    
+
     // Submit
     int ret = io_uring_submit(&ctx->ring);
     if (ret < 0) {
         log_error("Failed to submit TUN read: %s", strerror(-ret));
         return -1;
     }
-    
+
     log_debug("Submitted TUN read operation");
     return 0;
 }
 
 int iouring_submit_tun_write(iouring_ctx_t *ctx, io_op_t *op,
                              const uint8_t *data, size_t len) {
-    if (!ctx || !op || !data || ctx->tun_fd < 0) {
+    if (!ctx || !op || !data || op->fd < 0) {
         log_error("Invalid parameters for TUN write");
         return -1;
     }
-    
+
     if (len > PACKET_BUFFER_SIZE) {
         log_error("TUN write data too large: %zu", len);
         return -1;
     }
-    
+
     struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
     if (!sqe) {
         log_error("Failed to get SQE for TUN write");
         return -1;
     }
-    
-    op->op_type = OP_TYPE_TUN_WRITE;
+
+    assert(op->op_type == OP_TYPE_TUN_WRITE);
     memcpy(op->buffer, data, len);
-    
+
     // Prepare write operation
-    io_uring_prep_write(sqe, ctx->tun_fd, op->buffer, len, 0);
+    io_uring_prep_write(sqe, op->fd, op->buffer, len, 0);
     io_uring_sqe_set_data(sqe, op);
-    
+
     // Submit
     int ret = io_uring_submit(&ctx->ring);
     if (ret < 0) {
         log_error("Failed to submit TUN write: %s", strerror(-ret));
         return -1;
     }
-    
+
     log_debug("Submitted TUN write operation: %zu bytes", len);
     return 0;
 }
 
-int iouring_submit_udp_recv(iouring_ctx_t *ctx, int udp_fd, io_op_t *op) {
-    if (!ctx || !op || udp_fd < 0) {
+int iouring_submit_udp_recv(iouring_ctx_t *ctx, io_op_t *op) {
+    if (!ctx || !op) {
         log_error("Invalid parameters for UDP recv");
         return -1;
     }
@@ -128,7 +151,7 @@ int iouring_submit_udp_recv(iouring_ctx_t *ctx, int udp_fd, io_op_t *op) {
     op->addr_len = sizeof(op->addr);
     
     // Prepare recvmsg operation
-    io_uring_prep_recvmsg(sqe, udp_fd, &op->msg, 0);
+    io_uring_prep_recvmsg(sqe, op->fd, &op->msg, 0);
     io_uring_sqe_set_data(sqe, op);
     
     // Submit
@@ -138,49 +161,49 @@ int iouring_submit_udp_recv(iouring_ctx_t *ctx, int udp_fd, io_op_t *op) {
         return -1;
     }
     
-    log_debug("Submitted UDP recv operation on fd=%d", udp_fd);
+    log_debug("Submitted UDP recv operation on fd=%d", op->fd);
     return 0;
 }
 
-int iouring_submit_udp_send(iouring_ctx_t *ctx, int udp_fd, io_op_t *op,
+int iouring_submit_udp_send(iouring_ctx_t *ctx, io_op_t *op,
                             const struct sockaddr *addr, socklen_t addr_len,
                             const uint8_t *data, size_t len) {
-    if (!ctx || !op || !addr || !data || udp_fd < 0) {
+    if (!ctx || !op || !addr || !data || op->fd < 0) {
         log_error("Invalid parameters for UDP send");
         return -1;
     }
-    
+
     if (len > PACKET_BUFFER_SIZE) {
         log_error("UDP send data too large: %zu", len);
         return -1;
     }
-    
+
     struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
     if (!sqe) {
         log_error("Failed to get SQE for UDP send");
         return -1;
     }
-    
-    op->op_type = OP_TYPE_UDP_SEND;
+
+    assert(op->op_type == OP_TYPE_UDP_SEND);
     memcpy(op->buffer, data, len);
-    
+
     // Setup msghdr for sendmsg
     memset(&op->msg, 0, sizeof(op->msg));
     memcpy(&op->addr, addr, addr_len);
     op->addr_len = addr_len;
-    
+
     op->iov.iov_base = op->buffer;
     op->iov.iov_len = len;
-    
+
     op->msg.msg_iov = &op->iov;
     op->msg.msg_iovlen = 1;
     op->msg.msg_name = &op->addr;
     op->msg.msg_namelen = addr_len;
-    
+
     // Prepare sendmsg operation
-    io_uring_prep_sendmsg(sqe, udp_fd, &op->msg, 0);
+    io_uring_prep_sendmsg(sqe, op->fd, &op->msg, 0);
     io_uring_sqe_set_data(sqe, op);
-    
+
     // Submit
     int ret = io_uring_submit(&ctx->ring);
     if (ret < 0) {
@@ -190,10 +213,10 @@ int iouring_submit_udp_send(iouring_ctx_t *ctx, int udp_fd, io_op_t *op,
         log_error("Failed to submit UDP send, ret=0");
         return -1;
     }
-    
+
     log_debug("Submitted UDP send operation on fd=%d: %zu bytes to %s",
-              udp_fd, len, addr_to_string(addr));
-    
+              op->fd, len, addr_to_string(addr));
+
     return 0;
 }
 
@@ -255,14 +278,14 @@ void iouring_cleanup(iouring_ctx_t *ctx) {
     }
 }
 
-io_op_t* io_op_alloc(int op_type) {
+io_op_t* io_op_alloc(int op_type, int fd) {
     io_op_t *op = calloc(1, sizeof(io_op_t));
     if (!op) {
         log_error("Failed to allocate I/O operation");
         return NULL;
     }
-    
     op->op_type = op_type;
+    op->fd = fd;
     return op;
 }
 
@@ -270,6 +293,28 @@ void io_op_free(io_op_t *op) {
     if (op) {
         free(op);
     }
+}
+
+int iouring_resubmit_recv(iouring_ctx_t *uring_ctx, io_op_t *completed) {
+    int ret = 0;
+    io_op_t * new_op = io_op_alloc(completed->op_type, completed->fd);
+    if (!new_op) {
+        ret = -1;
+    } else {
+        new_op->fd = completed->fd;
+        switch(completed->op_type) {
+            case OP_TYPE_TUN_READ:
+                ret = iouring_submit_tun_read(uring_ctx, new_op);
+                break;
+            case OP_TYPE_UDP_RECV:
+                ret = iouring_submit_udp_recv(uring_ctx, new_op);
+                break;
+            default:
+                log_error("Wrong recv op type");
+                ret = -1;
+        }
+    }
+    return ret;
 }
 
 // Made with Bob

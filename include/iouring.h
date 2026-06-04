@@ -4,6 +4,7 @@
 #include <liburing.h>
 #include <stdint.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
 
 // Operation types for user_data
 #define OP_TYPE_TUN_READ    1
@@ -17,8 +18,7 @@
 // I/O operation context
 typedef struct {
     int op_type;
-    void *user_data;
-    int udp_fd;  // UDP socket file descriptor for this operation
+    int fd;  // Fle descriptor for this operation
     uint8_t buffer[PACKET_BUFFER_SIZE];
     int data_len;
     struct msghdr msg;
@@ -40,13 +40,6 @@ typedef struct {
  * @return Pointer to iouring_ctx_t on success, NULL on failure
  */
 iouring_ctx_t* iouring_init(unsigned queue_depth);
-
-/**
- * Set TUN device file descriptor
- * @param ctx io-uring context
- * @param tun_fd TUN device file descriptor
- */
-void iouring_set_tun_fd(iouring_ctx_t *ctx, int tun_fd);
 
 /**
  * Submit a TUN read operation
@@ -74,7 +67,7 @@ int iouring_submit_tun_write(iouring_ctx_t *ctx, io_op_t *op,
  * @param op I/O operation context
  * @return 0 on success, -1 on failure
  */
-int iouring_submit_udp_recv(iouring_ctx_t *ctx, int udp_fd, io_op_t *op);
+int iouring_submit_udp_recv(iouring_ctx_t *ctx, io_op_t *op);
 
 /**
  * Submit a UDP send operation
@@ -86,7 +79,7 @@ int iouring_submit_udp_recv(iouring_ctx_t *ctx, int udp_fd, io_op_t *op);
  * @param len Length of data
  * @return 0 on success, -1 on failure
  */
-int iouring_submit_udp_send(iouring_ctx_t *ctx, int udp_fd, io_op_t *op,
+int iouring_submit_udp_send(iouring_ctx_t *ctx, io_op_t *op,
                             const struct sockaddr *addr, socklen_t addr_len,
                             const uint8_t *data, size_t len);
 
@@ -124,13 +117,23 @@ void iouring_cleanup(iouring_ctx_t *ctx);
  * @param op_type Operation type
  * @return Pointer to io_op_t on success, NULL on failure
  */
-io_op_t* io_op_alloc(int op_type);
+io_op_t* io_op_alloc(int op_typ, int fd);
 
 /**
  * Free I/O operation context
  * @param op I/O operation context
  */
 void io_op_free(io_op_t *op);
+
+/**
+ * Get the name of an IO op type as a string
+ */
+const char *op_type_str(int op_type);
+
+/**
+ * Resubmit a completed receive op
+ */
+int iouring_resubmit_recv(iouring_ctx_t *uring_ctx, io_op_t *completed);
 
 #endif // IOURING_H
 

@@ -1,10 +1,21 @@
 #ifndef CONNECTION_H
 #define CONNECTION_H
 
+#include "dtls_context.h"
+#include "iouring.h"
 #include <openssl/ssl.h>
 #include <sys/socket.h>
 #include <stdint.h>
 #include <time.h>
+
+/**
+ *  UDP connection role
+ */
+typedef enum {
+    CONN_ROLE_CLIENT,  // Initiates connection (outbound)
+    CONN_ROLE_SERVER   // Accepts connection (inbound)
+} conn_role_t;
+
 
 // Connection states
 typedef enum {
@@ -14,7 +25,10 @@ typedef enum {
 } conn_state_t;
 
 // Connection structure
-typedef struct connection {
+typedef struct dtls_connection {
+    int udp_fd;
+
+    dtls_ctx_t *dtls_ctx;
     SSL *ssl;
     BIO *rbio;  // Read BIO (network → SSL)
     BIO *wbio;  // Write BIO (SSL → network)
@@ -22,94 +36,47 @@ typedef struct connection {
     struct sockaddr_storage addr;  // UDP address (IP:port)
     socklen_t addr_len;
 
-    uint32_t tunnel_ip;  // Client's VPN tunnel IP (network byte order)
-
     conn_state_t state;
     time_t last_activity;
 
     struct connection *next;  // For hash table chaining
-} connection_t;
-
-// Connection table (hash table)
-typedef struct {
-    connection_t **buckets;
-    size_t bucket_count;
-    size_t conn_count;
-    size_t max_connections;
-} connection_table_t;
+} dtls_connection_t;
 
 /**
- * Initialize connection table
- * @param bucket_count Number of hash buckets
- * @param max_connections Maximum number of connections
- * @return Pointer to connection_table_t on success, NULL on failure
+ * Return the role name as string
  */
-connection_table_t* connection_table_init(size_t bucket_count, size_t max_connections);
+char *conn_role_str(conn_role_t role);
 
 /**
- * Find connection by UDP address
- * @param table Connection table
- * @param addr Client UDP address
- * @return Pointer to connection_t if found, NULL otherwise
+ * Create new dtls connection
  */
-connection_t* connection_find(connection_table_t *table, const struct sockaddr *addr);
+dtls_connection_t* create_dtls_connection(conn_role_t role,
+                                          const char *remote_host,
+                                          uint16_t remote_port,
+                                          uint16_t local_port,
+                                          const char *cert_file,
+                                          const char *key_file,
+                                          const char *ca_file);
 
 /**
- * Find connection by tunnel IP address
- * @param table Connection table
- * @param tunnel_ip Tunnel IP address (network byte order)
- * @return Pointer to connection_t if found, NULL otherwise
+ * Decrypt udp packet payload
  */
-connection_t* connection_find_by_tunnel_ip(connection_table_t *table, uint32_t tunnel_ip);
+int dtls_decrypt_packet(dtls_connection_t *dtls,
+                        const uint8_t *encrypted, int encrypted_len,
+                        uint8_t *decrypted, int decrypted_len);
 
 /**
- * Set tunnel IP for a connection
- * @param conn Connection
- * @param tunnel_ip Tunnel IP address (network byte order)
+ * Encrypt udp packet payload
  */
-void connection_set_tunnel_ip(connection_t *conn, uint32_t tunnel_ip);
+int dtls_encrypt_packet(dtls_connection_t *dtls,
+                        const uint8_t *data, int data_len,
+                        uint8_t *result, int result_size);
+
 
 /**
- * Create new connection
- * @param table Connection table
- * @param ssl SSL object
- * @param rbio Read BIO
- * @param wbio Write BIO
- * @param addr Client address
- * @param addr_len Address length
- * @return Pointer to connection_t on success, NULL on failure
+ * Start and complete DTLS handshake
  */
-connection_t* connection_create(connection_table_t *table, SSL *ssl,
-                                BIO *rbio, BIO *wbio,
-                                const struct sockaddr *addr, socklen_t addr_len);
-
-/**
- * Destroy connection
- * @param table Connection table
- * @param conn Connection to destroy
- */
-void connection_destroy(connection_table_t *table, connection_t *conn);
-
-/**
- * Update connection activity timestamp
- * @param conn Connection
- */
-void connection_update_activity(connection_t *conn);
-
-/**
- * Cleanup connection table and all connections
- * @param table Connection table
- */
-void connection_table_cleanup(connection_table_t *table);
-
-/**
- * Get connection count
- * @param table Connection table
- * @return Number of active connections
- */
-static inline size_t connection_table_count(const connection_table_t *table) {
-    return table ? table->conn_count : 0;
-}
+int do_dtls_handshake(iouring_ctx_t *uring_ctx, dtls_connection_t *conn);
 
 #endif // CONNECTION_H
 

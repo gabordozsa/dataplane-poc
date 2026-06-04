@@ -1,7 +1,11 @@
 #include "dtls_context.h"
 #include "utils.h"
+#include "connection.h"
+#include "packet_handler.h"
+#include "iouring.h"
 #include <string.h>
 #include <stdlib.h>
+#include <assert.h>
 
 // Cookie generation callbacks for DoS protection
 static int generate_cookie(SSL *ssl, unsigned char *cookie, unsigned int *cookie_len) {
@@ -237,7 +241,7 @@ void dtls_ssl_cleanup(SSL *ssl) {
 
 const char* dtls_get_error_string(SSL *ssl, int ret) {
     int err = SSL_get_error(ssl, ret);
-    
+
     switch (err) {
         case SSL_ERROR_NONE:
             return "No error";

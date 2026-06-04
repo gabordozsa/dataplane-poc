@@ -7,82 +7,35 @@
 #include <liburing.h>
 
 /**
- * Handle TUN read completion (packet from TUN device)
- * For client: encrypt and send to server
- * For server: encrypt and send to appropriate client
- * @param cqe Completion queue entry
- * @param conn Connection (NULL for client single connection)
- * @param udp_fd UDP socket file descriptor
- * @param uring_ctx io-uring context
- * @return 0 on success, -1 on failure
- */
-int handle_tun_read(struct io_uring_cqe *cqe, connection_t *conn,
-                    int udp_fd, iouring_ctx_t *uring_ctx);
-
-/**
- * Handle UDP receive completion (encrypted packet from network)
- * Decrypt and write to TUN device
- * @param cqe Completion queue entry
- * @param conn_table Connection table (NULL for client)
- * @param conn Single connection (for client, NULL for server)
- * @param dtls_ctx DTLS context (for creating new connections on server)
- * @param udp_fd UDP socket file descriptor
- * @param uring_ctx io-uring context
- * @return 0 on success, -1 on failure
- */
-int handle_udp_recv(struct io_uring_cqe *cqe, connection_table_t *conn_table,
-                    connection_t *conn, dtls_ctx_t *dtls_ctx,
-                    int udp_fd, iouring_ctx_t *uring_ctx);
-
-/**
- * Handle TUN write completion
- * @param cqe Completion queue entry
- * @return 0 on success, -1 on failure
- */
-int handle_tun_write(struct io_uring_cqe *cqe);
-
-/**
- * Handle UDP send completion
- * @param cqe Completion queue entry
- * @return 0 on success, -1 on failure
- */
-int handle_udp_send(struct io_uring_cqe *cqe);
-
-/**
- * Process DTLS handshake
- * @param conn Connection
- * @param udp_fd UDP socket file descriptor
- * @param uring_ctx io-uring context
- * @return 0 if handshake complete, 1 if in progress, -1 on error
- */
-int process_dtls_handshake(connection_t *conn, int udp_fd, iouring_ctx_t *uring_ctx);
-
-/**
  * Encrypt and send packet via DTLS
  * @param conn Connection
- * @param udp_fd UDP socket file descriptor
  * @param data Plaintext data
  * @param len Data length
  * @param uring_ctx io-uring context
  * @return 0 on success, -1 on failure
  */
-int dtls_encrypt_and_send(connection_t *conn, int udp_fd, const uint8_t *data,
-                          size_t len, iouring_ctx_t *uring_ctx);
+int dtls_encrypt_and_send_udp(dtls_connection_t *conn, const uint8_t *data,
+                              size_t len, iouring_ctx_t *uring_ctx);
+
 
 /**
- * Receive and decrypt packet via DTLS
- * @param conn Connection
- * @param udp_fd UDP socket file descriptor
- * @param encrypted Encrypted data
- * @param encrypted_len Encrypted data length
- * @param decrypted Buffer for decrypted data
- * @param decrypted_size Size of decrypted buffer
- * @param uring_ctx io-uring context
- * @return Number of decrypted bytes on success, -1 on error
+ * Decrypt and write packet to TUN
  */
-int dtls_recv_and_decrypt(connection_t *conn, int udp_fd, const uint8_t *encrypted,
-                          size_t encrypted_len, uint8_t *decrypted,
-                          size_t decrypted_size, iouring_ctx_t *uring_ctx);
+int dtls_decrypt_and_write_tun(dtls_connection_t *conn,
+                               int tun_fd,
+                               const uint8_t *encrypted, int encrypted_len,
+                               iouring_ctx_t *uring_ctx);
+
+/**
+ * Wait for the next receive completion
+ */
+io_op_t *wait_for_recv(iouring_ctx_t *uring_ctx);
+
+/**
+ * Send UDP datagram by io_uring
+ */
+int send_udp(iouring_ctx_t *uring_ctx, dtls_connection_t *conn,
+             const uint8_t *encrypted, int encrypted_len);
 
 #endif // PACKET_HANDLER_H
 

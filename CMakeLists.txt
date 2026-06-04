@@ -31,6 +31,7 @@ set(COMMON_SOURCES
     src/dtls_context.c
     src/connection.c
     src/packet_handler.c
+    src/tun_udp_run.c
 )
 
 # Create static library for common code

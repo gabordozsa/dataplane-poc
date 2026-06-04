@@ -53,13 +53,9 @@ int tun_device_down(tun_device_t *tun);
 void tun_device_destroy(tun_device_t *tun);
 
 /**
- * Get file descriptor for I/O operations
- * @param tun TUN device
- * @return File descriptor
+ * Setup a new tun device
  */
-static inline int tun_device_get_fd(const tun_device_t *tun) {
-    return tun ? tun->fd : -1;
-}
+ tun_device_t *new_tun_device(const char *ifname, const char *ip, const char *netmask, int mtu);
 
 #endif // TUN_DEVICE_H
 
