@@ -15,6 +15,8 @@ typedef enum {
     LOG_ERROR = 3
 } log_level_t;
 
+bool at_log_level(log_level_t l);
+
 // Logging functions
 void log_set_level(log_level_t level);
 void log_message(log_level_t level, const char *fmt, ...);
@@ -35,7 +37,7 @@ void addr_copy(struct sockaddr_storage *dst, const struct sockaddr *src, socklen
 
 // IP packet validation and parsing
 bool validate_ip_packet(const uint8_t *packet, size_t len);
-void print_ip_packet_info(const uint8_t *packet, size_t len);
+void print_ip_packet_info(const uint8_t *packet, size_t len, const char* msg);
 uint32_t get_ipv4_destination(const uint8_t *packet, size_t len);
 uint32_t get_ipv4_source(const uint8_t *packet, size_t len);
 

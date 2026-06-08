@@ -151,6 +151,10 @@ static int forward_udp_packet(forwarder_ctx_t *ctx, io_op_t *op) {
         return -1;
     }
 
+    if (at_log_level(LOG_DEBUG)) {
+        print_ip_packet_info(decrypted, decrypted_len, "forwarding");
+    }
+
     int ret = dtls_encrypt_and_send_udp(forward_conn,
                                         decrypted, decrypted_len,
                                         ctx->uring_ctx);

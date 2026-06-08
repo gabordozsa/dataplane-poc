@@ -11,6 +11,13 @@
 
 static log_level_t current_log_level = LOG_INFO;
 
+bool at_log_level(log_level_t l) {
+    if (current_log_level <= l) {
+        return true;
+    }
+    return false;
+}
+
 void log_set_level(log_level_t level) {
     current_log_level = level;
 }
@@ -203,7 +210,7 @@ bool validate_ip_packet(const uint8_t *packet, size_t len) {
     return false;  // Unknown version
 }
 
-void print_ip_packet_info(const uint8_t *packet, size_t len) {
+void print_ip_packet_info(const uint8_t *packet, size_t len, const char *msg) {
     if (len < 20) {
         log_debug("Packet too short: %zu bytes", len);
         return;
@@ -218,8 +225,8 @@ void print_ip_packet_info(const uint8_t *packet, size_t len) {
         inet_ntop(AF_INET, &iph->saddr, src, sizeof(src));
         inet_ntop(AF_INET, &iph->daddr, dst, sizeof(dst));
         
-        log_debug("IPv4: %s -> %s, proto=%d, len=%d",
-                  src, dst, iph->protocol, ntohs(iph->tot_len));
+        log_debug("IPv4 packet %s: %s -> %s, proto=%d, len=%d",
+                  msg, src, dst, iph->protocol, ntohs(iph->tot_len));
     } else if (version == 6) {
         // IPv6 header is different structure
         struct {
@@ -235,8 +242,8 @@ void print_ip_packet_info(const uint8_t *packet, size_t len) {
         inet_ntop(AF_INET6, &ip6h->saddr, src, sizeof(src));
         inet_ntop(AF_INET6, &ip6h->daddr, dst, sizeof(dst));
         
-        log_debug("IPv6: %s -> %s, next=%d, len=%d",
-                  src, dst, ip6h->next_header, ntohs(ip6h->payload_len));
+        log_debug("IPv6 packet %s: %s -> %s, next=%d, len=%d",
+                  msg, src, dst, ip6h->next_header, ntohs(ip6h->payload_len));
     } else {
         log_debug("Unknown IP version: %d", version);
     }

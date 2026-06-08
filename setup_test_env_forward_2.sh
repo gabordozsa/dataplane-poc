@@ -25,6 +25,7 @@ sudo ip netns del forward_1 2>/dev/null || true
 sudo ip netns del forward_2 2>/dev/null || true
 sudo ip link del veth0 2>/dev/null || true
 sudo ip link del veth2 2>/dev/null || true
+sudo ip link del veth4 2>/dev/null || true
 
 # Create network namespaces
 echo "Creating network namespaces..."
@@ -106,7 +107,7 @@ echo ""
 echo "To run the 2nd forwarder:"
 echo "  sudo ip netns exec forward_2 ./build/dtls_forwarder ${FORWARD_IN_PORT} ${FORWARD_OUT_PORT}  certs/forwarder_cert.pem certs/forwarder_key.pem  ${SERVER_IP} ${SERVER_PORT}"
 echo ""
-echo "To run the client (in another terminal):"
+echo "To run the client:"
 echo "  sudo ip netns exec client ./build/vpn_client ${FORWARD_IP_1_1} ${FORWARD_IN_PORT}  10.8.0.1"
 echo ""
 echo "Create route for client (-> to make rp_filter happy, i.e. server TUN addr can be accessed via tun0):"
@@ -114,7 +115,7 @@ echo "  sudo ip netns exec client ip route add 10.9.0.0/24 dev tun0"
 echo "Create route for server (-> to make reply IP from http server to find tun1)):"
 echo "  sudo ip netns exec server ip route add 10.8.0.0/24 dev tun1"
 echo ""
-echo "To test with ping (after VPN is connected):"
+echo "To test with ping:"
 echo "  sudo ip netns exec client ping  10.9.0.254"
 echo ""
 echo "To run HTTP server in server namespace:"

@@ -79,6 +79,10 @@ int dtls_encrypt_and_send_udp(dtls_connection_t *conn,
         return -1;
     }
 
+    if (at_log_level(LOG_DEBUG)) {
+        print_ip_packet_info(encrypted, encrypted_len, "encrypted");
+    }
+
     io_op_t *op = io_op_alloc(OP_TYPE_UDP_SEND, conn->udp_fd);
     if (!op) {
         return -1;
@@ -99,6 +103,10 @@ int dtls_decrypt_and_write_tun(dtls_connection_t *conn,
                                   decrypted, sizeof(decrypted));
     if (decrypted_len < 0) {
         return -1;
+    }
+
+    if (at_log_level(LOG_DEBUG)) {
+        print_ip_packet_info(decrypted, decrypted_len, "decrypted");
     }
 
     io_op_t *tun_op = io_op_alloc(OP_TYPE_TUN_WRITE, tun_fd);
