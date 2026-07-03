@@ -215,16 +215,16 @@ void print_ip_packet_info(const uint8_t *packet, size_t len, const char *msg) {
         log_debug("Packet too short: %zu bytes", len);
         return;
     }
-    
+
     uint8_t version = (packet[0] >> 4);
-    
+
     if (version == 4) {
         struct iphdr *iph = (struct iphdr *)packet;
-        
+
         char src[INET_ADDRSTRLEN], dst[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &iph->saddr, src, sizeof(src));
         inet_ntop(AF_INET, &iph->daddr, dst, sizeof(dst));
-        
+
         log_debug("IPv4 packet %s: %s -> %s, proto=%d, len=%d",
                   msg, src, dst, iph->protocol, ntohs(iph->tot_len));
     } else if (version == 6) {
@@ -237,11 +237,11 @@ void print_ip_packet_info(const uint8_t *packet, size_t len, const char *msg) {
             struct in6_addr saddr;
             struct in6_addr daddr;
         } *ip6h = (void *)packet;
-        
+
         char src[INET6_ADDRSTRLEN], dst[INET6_ADDRSTRLEN];
         inet_ntop(AF_INET6, &ip6h->saddr, src, sizeof(src));
         inet_ntop(AF_INET6, &ip6h->daddr, dst, sizeof(dst));
-        
+
         log_debug("IPv6 packet %s: %s -> %s, next=%d, len=%d",
                   msg, src, dst, ip6h->next_header, ntohs(ip6h->payload_len));
     } else {

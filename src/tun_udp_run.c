@@ -12,8 +12,9 @@ int tun_udp_run(iouring_ctx_t *uring_ctx, dtls_connection_t *conn, int tun_fd, v
     log_info("Starting server main loop");
 
     // Main event loop
+    io_op_t *op = NULL;
     while (*running) {
-        io_op_t *op = wait_for_recv(uring_ctx);
+        op = wait_for_recv(uring_ctx);
         if (op) {
             switch (op->op_type) {
                 case OP_TYPE_TUN_READ:
@@ -32,10 +33,14 @@ int tun_udp_run(iouring_ctx_t *uring_ctx, dtls_connection_t *conn, int tun_fd, v
                     log_error("Invalid recv OP type");
                     ret = -1;
                 }
-            free(op);
+            io_op_free(uring_ctx, &op);
+        } else {
+            ret = -1;
         }
         if (ret < 0)
             break;
     }
+    free(op); // for multi op
+
     return ret;
 }

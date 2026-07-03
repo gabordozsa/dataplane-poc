@@ -39,6 +39,12 @@ forwarder_ctx_t *forwarder_create(const char *remote_host, uint16_t remote_port,
         return NULL;
     }
 
+    // Alloc buffers
+    int ret = iouring_alloc_buffers(ctx->uring_ctx);
+     if (ret != 0) {
+        return NULL;
+    }
+
     // Initialize OpenSSL
     dtls_library_init();
 
@@ -115,7 +121,7 @@ void forwarder_destroy(forwarder_ctx_t *ctx) {
 static int forward_udp_packet(forwarder_ctx_t *ctx, io_op_t *op) {
 
     int packet_len = op->data_len;
-    struct sockaddr *src_addr = (struct sockaddr *)&op->addr;
+    struct sockaddr *src_addr = (struct sockaddr *)op->addr;
 
     // Determine which connection based solely on which socket received the packet
     int from_inbound_socket = (op->fd == ctx->inbound->udp_fd);
@@ -143,7 +149,7 @@ static int forward_udp_packet(forwarder_ctx_t *ctx, io_op_t *op) {
         //log_debug("Packet from outbound connection");
     }
 
-    uint8_t decrypted[PACKET_BUFFER_SIZE];
+    uint8_t decrypted[BUF_SIZE];
     int decrypted_len = dtls_decrypt_packet(recv_conn,
                                             op->buffer, packet_len,
                                             decrypted, sizeof(decrypted));
@@ -176,8 +182,9 @@ int forwarder_run(forwarder_ctx_t *ctx) {
     //time_t last_stats = time(NULL);
 
     // Main event loop
+    io_op_t *op = NULL;
     while (true) {
-        io_op_t *op = wait_for_recv(ctx->uring_ctx);
+        op = wait_for_recv(ctx->uring_ctx);
         if (!op) {
            return -1;
         }
@@ -188,8 +195,9 @@ int forwarder_run(forwarder_ctx_t *ctx) {
         ret = forward_udp_packet(ctx, op);
         if (ret < 0)
             return ret;
-        free(op);
+        io_op_free(ctx->uring_ctx, &op);
     }
+    free(op); // for multi op
     return ret;
 }
 
@@ -220,7 +228,7 @@ int main(int argc, char **argv) {
     signal(SIGTERM, signal_handler);
 
     // Initialize logging
-    log_set_level(LOG_DEBUG);
+    log_set_level(LOG_LEVEL);
     log_info("Starting DTLS Forwarder");
     log_info("Inbound port: %d", inbound_port);
     log_info("Outbound port: %d", outbound_port);
@@ -236,32 +244,23 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+
     // Submit initial UDP receive operations for inbound socket
-    for (int i = 0; i < 4; i++) {
-        io_op_t *op = io_op_alloc(OP_TYPE_UDP_RECV, ctx->inbound->udp_fd);
-        if (op) {
-            int ret = iouring_submit_udp_recv(ctx->uring_ctx, op);
-            if (ret != 0) {
-                log_error("Failed to submit inbound UDP recv %d", i);
-                io_op_free(op);
-            }
-        }
-    }
+    int ret = iouring_initial_udp_recvs(ctx->uring_ctx, ctx->inbound->udp_fd);
+    if (ret != 0) {
+        return -1;
+    };
+    log_debug("Submitted initial UDP receive operation(s) for inbound socket");
 
     // Submit initial UDP receive operations for outbound socket
-    for (int i = 0; i < 4; i++) {
-        io_op_t *op = io_op_alloc(OP_TYPE_UDP_RECV, ctx->outbound->udp_fd);
-        if (op) {
-            int ret = iouring_submit_udp_recv(ctx->uring_ctx, op);
-            if (ret != 0) {
-                log_error("Failed to submit outbound UDP recv %d", i);
-                io_op_free(op);
-            }
-        }
-    }
+    ret = iouring_initial_udp_recvs(ctx->uring_ctx, ctx->outbound->udp_fd);
+    if (ret != 0) {
+        return -1;
+    };
+    log_debug("Submitted initial UDP receive operation(s) for outbound socket");
 
     log_info("Handshake STARTED - inbound");  
-    int ret = do_dtls_handshake(ctx->uring_ctx, ctx->inbound);
+    ret = do_dtls_handshake(ctx->uring_ctx, ctx->inbound);
     if (ret < 0) {
         log_info("Handshake FAILED - inbound");
         return ret;

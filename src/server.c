@@ -38,7 +38,7 @@ int main(int argc, char **argv) {
     signal(SIGTERM, signal_handler);
 
     // Initialize logging
-    log_set_level(LOG_DEBUG);
+    log_set_level(LOG_LEVEL);
     log_info("Starting DTLS VPN server");
     log_info("Port: %d", port);
     log_info("Certificate: %s", cert_file);
@@ -62,18 +62,21 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // Submit initial UDP receive operations
-    int num_recv_ops = 8;
-    for (int i = 0; i < num_recv_ops; i++) {
-        io_op_t *op = io_op_alloc(OP_TYPE_UDP_RECV, conn->udp_fd);
-        if (op) {
-            iouring_submit_udp_recv(uring_ctx, op);
-        }
+    // Alloc buffers
+    int ret = iouring_alloc_buffers(uring_ctx);
+     if (ret != 0) {
+        return -1;
     }
-    log_debug("Submitted %d UDP receive operations", num_recv_ops);
+
+    // Submit initial UDP receive operations
+    ret = iouring_initial_udp_recvs(uring_ctx, conn->udp_fd);
+    if (ret != 0) {
+        return -1;
+    };
+    log_debug("Submitted initial UDP receive operation(s)");
 
     log_info("Waiting for client connection, starting handshake ...");
-    int ret = do_dtls_handshake(uring_ctx, conn);
+    ret = do_dtls_handshake(uring_ctx, conn);
     if (ret) {
         log_error("Handshake FAILURE");
         return 1;
@@ -88,18 +91,11 @@ int main(int argc, char **argv) {
     }
 
     // Submit initial TUN read operations
-    int num_read_ops = 8;
-    for (int i = 0; i < num_read_ops; i++) {
-        io_op_t *op = io_op_alloc(OP_TYPE_TUN_READ, tun->fd);
-        if (op) {
-            int ret = iouring_submit_tun_read(uring_ctx, op);
-            if (ret < 0) {
-                log_error("Failed to submit TUN read %d", i);
-                return 1;
-            }
-        }
+    ret = iouring_initial_tun_reads(uring_ctx, tun->fd);
+    if (ret != 0) {
+        return ret;
     }
-    log_debug("Submitted %d TUN read operations", num_read_ops);
+    log_debug("Submitted initial TUN read operation(s)");
 
     ret = tun_udp_run(uring_ctx, conn, tun->fd, &running);
     if (ret < 0) {

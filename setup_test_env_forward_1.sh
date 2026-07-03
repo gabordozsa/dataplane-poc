@@ -4,7 +4,7 @@
 
 set -e
 
-echo "Setting up network namespaces for TUN/DTLS  testing..."
+
 
 CLIENT_IP=192.168.100.1
 SERVER_IP=192.168.100.2
@@ -20,6 +20,11 @@ sudo ip netns del server 2>/dev/null || true
 sudo ip netns del forward 2>/dev/null || true
 sudo ip link del veth0 2>/dev/null || true
 sudo ip link del veth2 2>/dev/null || true
+
+# Exit if cleaning only
+[[ "x$1" == "xclean" ]] && { echo "Cleaned up previous setup"; exit 0; }
+
+echo "Setting up network namespaces for TUN/DTLS  testing..."
 
 # Create network namespaces
 echo "Creating network namespaces..."
@@ -100,7 +105,7 @@ echo "To test HTTP (from client namespace):"
 echo "  sudo ip netns exec client curl -v http://10.9.0.254:2222"
 echo ""
 echo "To cleanup:"
-echo "  ./cleanup_test_env.sh"
+echo "  $0 clean"
 echo ""
 
 # Made with Bob

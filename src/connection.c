@@ -138,20 +138,43 @@ int dtls_encrypt_packet(dtls_connection_t *dtls,
 int dtls_decrypt_packet(dtls_connection_t *dtls,
                         const uint8_t *encrypted, int encrypted_len,
                         uint8_t *decrypted, int decrypted_size) {
+    int rpending = BIO_ctrl_pending(dtls->rbio);
+     int wpending = BIO_ctrl_pending(dtls->wbio);
+    int eof = BIO_eof(dtls->rbio);
+    log_debug("Before SSL_write, rpending %d eof %d wpending %d", rpending, eof, wpending);
     int written = BIO_write(dtls->rbio, encrypted, encrypted_len);
     if (written <= 0) {
         log_error("BIO_write failed");
         return -1;
+    } else if (written != encrypted_len) {
+        log_error("BIO_write wrote %d bytes, expected %d", written, encrypted_len);
+        return -1;
     }
-    int read = SSL_read(dtls->ssl, decrypted, decrypted_size);
+    // DEBUG
+    rpending = BIO_ctrl_pending(dtls->rbio);
+    wpending = BIO_ctrl_pending(dtls->wbio);
+    eof = BIO_eof(dtls->rbio);
+    log_debug("Before SSL_read, rpending %d eof %d wpending %d", rpending, eof, wpending);
+
+    assert(encrypted_len < decrypted_size);
+    int read = SSL_read(dtls->ssl, decrypted, encrypted_len);
     int err = SSL_get_error(dtls->ssl, read);
+    rpending = BIO_ctrl_pending(dtls->rbio);
+    wpending = BIO_ctrl_pending(dtls->wbio);
+    eof = BIO_eof(dtls->rbio);
+    log_debug("SSL_read %d err %d BIO write len %d rbio pending %d eof %d wpending %d", read, err, encrypted_len, rpending, eof, wpending);
     if (err != SSL_ERROR_NONE) {
-        //if (err == SSL_ERROR_ZERO_RETURN) {
+        if (err == SSL_ERROR_WANT_READ && !rpending && eof) {
+            log_debug("SSL read EOF -> continue ...");
+            //read = written; // TODO : is this safe ????
+        } else if (err == SSL_ERROR_ZERO_RETURN) {
         //   close_dtls(dtls);
-        //    return -1;
-        //} else {
+            log_error("SSL_read failed: ZERO_RETURN");
+            return -1;
+        } else {
             log_error("SSL_read failed: %s", dtls_get_error_string(dtls->ssl, read));
             return -1;
+        }
     }
     log_debug("Decrypted packet, bytes: %d", read);
     return read;
@@ -171,10 +194,10 @@ int do_dtls_handshake(iouring_ctx_t *uring_ctx, dtls_connection_t *conn) {
         // check if SSL wants to send data - this is necessary even if the handshake got completed locally!
         int ssl_send = BIO_ctrl_pending(conn->wbio);
         if (ssl_send) {
-            uint8_t buffer[PACKET_BUFFER_SIZE];
+            uint8_t buffer[BUF_SIZE];
             int read = BIO_read(conn->wbio, buffer, sizeof(buffer));
             assert(read > 0);
-            io_op_t *new_op = io_op_alloc(OP_TYPE_UDP_SEND, conn->udp_fd);
+            io_op_t *new_op = io_op_alloc(OP_TYPE_UDP_SEND, conn->udp_fd, false/*is_multi*/);
             assert(new_op);
             int ret = iouring_submit_udp_send(uring_ctx, new_op,
                                               (struct sockaddr *)&conn->addr,
@@ -215,13 +238,13 @@ int do_dtls_handshake(iouring_ctx_t *uring_ctx, dtls_connection_t *conn) {
                 if (conn->addr_len == 0) {
                     // First packet
                     assert(op->addr_len > 0);
-                    memcpy(&conn->addr, &op->addr, op->addr_len);
+                    memcpy(&conn->addr, op->addr, op->addr_len);
                     conn->addr_len = op->addr_len;
                 }
 
                 ret = BIO_write(conn->rbio, op->buffer, op->data_len);
                 log_debug("handshake: write RBIO: %d", ret);
-                io_op_free(op);
+                io_op_free(uring_ctx, &op);
                 break;
             case SSL_ERROR_WANT_WRITE:
                 ret = BIO_ctrl_pending(conn->wbio);

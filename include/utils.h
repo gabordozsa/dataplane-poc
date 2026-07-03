@@ -15,6 +15,8 @@ typedef enum {
     LOG_ERROR = 3
 } log_level_t;
 
+#define LOG_LEVEL LOG_INFO
+
 bool at_log_level(log_level_t l);
 
 // Logging functions
