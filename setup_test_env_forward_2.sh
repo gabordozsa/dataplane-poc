@@ -127,8 +127,14 @@ echo ""
 echo "To test HTTP (from client namespace):"
 echo "  sudo ip netns exec client curl -v http://10.9.0.254:2222"
 echo ""
-echo "To cleanup:"
-echo "  ./cleanup_test_env.sh"
+echo "iperf3 server:"
+echo "   sudo ip netns exec server iperf3 -s -B 10.9.0.254"
 echo ""
+echo "iperf3 client:"
+echo "   sudo ip netns exec client iperf3 -t 4 -c 10.9.0.254"
+echo ""
+echo "To cleanup:"
+echo "  $0 clean"
+
 
 # Made with Bob
