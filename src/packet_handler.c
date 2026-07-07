@@ -21,7 +21,6 @@ io_op_t *wait_for_recv(iouring_ctx_t *uring_ctx) {
             return NULL;
         }
         op = (io_op_t *)io_uring_cqe_get_data(cqe);
-        log_debug("CQE %p op %p", cqe, op);
         int cqe_res = cqe->res;
         unsigned cqe_flags = cqe->flags;
         iouring_cqe_seen(uring_ctx, cqe);
@@ -50,7 +49,7 @@ io_op_t *wait_for_recv(iouring_ctx_t *uring_ctx) {
                 break;
             case OP_TYPE_UDP_SEND:
                 assert(!op->is_multi);
-                log_debug("UDP sent %d bytes, fd %d op %p", op->data_len, op->fd, op);
+                log_debug("UDP sent %d bytes, fd %d", op->data_len, op->fd);
                 io_op_free(uring_ctx, &op);
                 break;
             case OP_TYPE_TUN_READ:
@@ -86,51 +85,57 @@ io_op_t *wait_for_recv(iouring_ctx_t *uring_ctx) {
 int dtls_encrypt_and_send_udp(dtls_connection_t *conn,
                               const uint8_t *data, size_t len,
                               iouring_ctx_t *uring_ctx) {
-    uint8_t encrypted[BUF_SIZE];
-
     if (at_log_level(LOG_DEBUG)) {
         print_ip_packet_info(data, len, "To be encrypted");
     }
-    int encrypted_len = dtls_encrypt_packet(conn, data, len,
-                                            encrypted, sizeof(encrypted));
-    if (encrypted_len < 0) {
-        return -1;
-    }
 
-    io_op_t *op = io_op_alloc(OP_TYPE_UDP_SEND, conn->udp_fd, false /*is_multi*/);
+    io_op_t *op = io_op_alloc(uring_ctx, OP_TYPE_UDP_SEND, conn->udp_fd, false /*is_multi*/);
     if (!op) {
         return -1;
     }
+
+    op->data_len = dtls_encrypt_packet(conn, data, len, op->buffer, BUF_SIZE);
+    if (op->data_len < 0) {
+        io_op_free(uring_ctx, &op);
+        return -1;
+    }
+
     int ret = iouring_submit_udp_send(uring_ctx, op,
                                       (struct sockaddr *)&conn->addr, conn->addr_len,
-                                      encrypted, encrypted_len);
-    return ret;
+                                      NULL /*data is already in place*/, op->data_len);
+    if (ret < 0) {
+        io_op_free(uring_ctx, &op);
+        return -1;
+    }
+    return 0;
 }
 
 int dtls_decrypt_and_write_tun(dtls_connection_t *conn,
                                int tun_fd,
                                const uint8_t *encrypted, int encrypted_len,
                                iouring_ctx_t *uring_ctx) {
-    uint8_t decrypted[BUF_SIZE];
-    int decrypted_len = dtls_decrypt_packet(conn,
-                                  encrypted, encrypted_len,
-                                  decrypted, sizeof(decrypted));
-    if (decrypted_len < 0) {
-        return -1;
-    }
-
-    io_op_t *tun_op = io_op_alloc(OP_TYPE_TUN_WRITE, tun_fd, false /*is_multi*/);
+    io_op_t *tun_op = io_op_alloc(uring_ctx, OP_TYPE_TUN_WRITE, tun_fd, false /*is_multi*/);
     if (!tun_op) {
         return -1;
     }
-    log_debug("Writing %d bytes to TUN", decrypted_len);
+    tun_op->data_len = dtls_decrypt_packet(conn,
+                                           encrypted, encrypted_len,
+                                           tun_op->buffer, BUF_SIZE);
+    if ( tun_op->data_len < 0) {
+        io_op_free(uring_ctx, &tun_op);
+        return -1;
+    }
+
+    log_debug("Writing %d bytes to TUN",  tun_op->data_len);
     if (at_log_level(LOG_DEBUG)) {
-        print_ip_packet_info(decrypted, decrypted_len, "decrypted");
+        print_ip_packet_info(tun_op->buffer, tun_op->data_len, "decrypted");
     }
 
     tun_op->fd = tun_fd;
-    int ret = iouring_submit_tun_write(uring_ctx, tun_op, decrypted, decrypted_len);
+    int ret = iouring_submit_tun_write(uring_ctx, tun_op, 
+                                       NULL /*data is already in place*/, tun_op->data_len);
     if (ret < 0) {
+        io_op_free(uring_ctx, &tun_op);
         return -1;
     }
 

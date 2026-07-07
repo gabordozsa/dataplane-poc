@@ -3,12 +3,11 @@
 
 #include <stdint.h>
 #include <stddef.h>
-
-#define TUN_NAME_MAX 16
+#include <net/if.h>
 
 typedef struct {
     int fd;
-    char name[TUN_NAME_MAX];
+    char name[IFNAMSIZ];
     char ip[16];
     char netmask[16];
     int mtu;

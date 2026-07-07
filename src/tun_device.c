@@ -52,7 +52,8 @@ tun_device_t* tun_device_create(const char *name) {
     }
     
     tun->fd = fd;
-    strncpy(tun->name, ifr.ifr_name, sizeof(tun->name) - 1);
+    strncpy(tun->name, ifr.ifr_name, sizeof(tun->name));
+    tun->name[sizeof(tun->name)-1] = '\0';
     
     log_info("Created TUN device: %s (fd=%d)", tun->name, tun->fd);
     
@@ -78,7 +79,8 @@ int tun_device_configure(tun_device_t *tun, const char *ip,
     }
     
     memset(&ifr, 0, sizeof(ifr));
-    strncpy(ifr.ifr_name, tun->name, IFNAMSIZ - 1);
+    strncpy(ifr.ifr_name, tun->name, IFNAMSIZ);
+    ifr.ifr_name[sizeof(ifr.ifr_name) - 1] = '\0';
     
     // Set IP address
     addr = (struct sockaddr_in *)&ifr.ifr_addr;
@@ -168,7 +170,8 @@ int tun_device_up(tun_device_t *tun) {
     }
     
     memset(&ifr, 0, sizeof(ifr));
-    strncpy(ifr.ifr_name, tun->name, IFNAMSIZ - 1);
+    strncpy(ifr.ifr_name, tun->name, IFNAMSIZ );
+    ifr.ifr_name[sizeof(ifr.ifr_name) - 1] = '\0';
     
     // Get current flags
     if (ioctl(sockfd, SIOCGIFFLAGS, &ifr) < 0) {
@@ -212,7 +215,8 @@ int tun_device_down(tun_device_t *tun) {
     }
     
     memset(&ifr, 0, sizeof(ifr));
-    strncpy(ifr.ifr_name, tun->name, IFNAMSIZ - 1);
+    strncpy(ifr.ifr_name, tun->name, IFNAMSIZ);
+    ifr.ifr_name[sizeof(ifr.ifr_name) - 1] = '\0';
     
     // Get current flags
     if (ioctl(sockfd, SIOCGIFFLAGS, &ifr) < 0) {

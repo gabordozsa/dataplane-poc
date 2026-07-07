@@ -62,14 +62,8 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // Alloc buffers
-    int ret = iouring_alloc_buffers(uring_ctx);
-     if (ret != 0) {
-        return -1;
-    }
-
     // Submit initial UDP receive operations
-    ret = iouring_initial_udp_recvs(uring_ctx, conn->udp_fd);
+    int ret = iouring_initial_udp_recvs(uring_ctx, conn->udp_fd);
     if (ret != 0) {
         return -1;
     };

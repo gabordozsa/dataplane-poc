@@ -138,10 +138,6 @@ int dtls_encrypt_packet(dtls_connection_t *dtls,
 int dtls_decrypt_packet(dtls_connection_t *dtls,
                         const uint8_t *encrypted, int encrypted_len,
                         uint8_t *decrypted, int decrypted_size) {
-    int rpending = BIO_ctrl_pending(dtls->rbio);
-     int wpending = BIO_ctrl_pending(dtls->wbio);
-    int eof = BIO_eof(dtls->rbio);
-    log_debug("Before SSL_write, rpending %d eof %d wpending %d", rpending, eof, wpending);
     int written = BIO_write(dtls->rbio, encrypted, encrypted_len);
     if (written <= 0) {
         log_error("BIO_write failed");
@@ -150,24 +146,13 @@ int dtls_decrypt_packet(dtls_connection_t *dtls,
         log_error("BIO_write wrote %d bytes, expected %d", written, encrypted_len);
         return -1;
     }
-    // DEBUG
-    rpending = BIO_ctrl_pending(dtls->rbio);
-    wpending = BIO_ctrl_pending(dtls->wbio);
-    eof = BIO_eof(dtls->rbio);
-    log_debug("Before SSL_read, rpending %d eof %d wpending %d", rpending, eof, wpending);
 
+    (void)decrypted_size;
     assert(encrypted_len < decrypted_size);
     int read = SSL_read(dtls->ssl, decrypted, encrypted_len);
     int err = SSL_get_error(dtls->ssl, read);
-    rpending = BIO_ctrl_pending(dtls->rbio);
-    wpending = BIO_ctrl_pending(dtls->wbio);
-    eof = BIO_eof(dtls->rbio);
-    log_debug("SSL_read %d err %d BIO write len %d rbio pending %d eof %d wpending %d", read, err, encrypted_len, rpending, eof, wpending);
     if (err != SSL_ERROR_NONE) {
-        if (err == SSL_ERROR_WANT_READ && !rpending && eof) {
-            log_debug("SSL read EOF -> continue ...");
-            //read = written; // TODO : is this safe ????
-        } else if (err == SSL_ERROR_ZERO_RETURN) {
+        if (err == SSL_ERROR_ZERO_RETURN) {
         //   close_dtls(dtls);
             log_error("SSL_read failed: ZERO_RETURN");
             return -1;
@@ -197,7 +182,7 @@ int do_dtls_handshake(iouring_ctx_t *uring_ctx, dtls_connection_t *conn) {
             uint8_t buffer[BUF_SIZE];
             int read = BIO_read(conn->wbio, buffer, sizeof(buffer));
             assert(read > 0);
-            io_op_t *new_op = io_op_alloc(OP_TYPE_UDP_SEND, conn->udp_fd, false/*is_multi*/);
+            io_op_t *new_op = io_op_alloc(uring_ctx, OP_TYPE_UDP_SEND, conn->udp_fd, false/*is_multi*/);
             assert(new_op);
             int ret = iouring_submit_udp_send(uring_ctx, new_op,
                                               (struct sockaddr *)&conn->addr,

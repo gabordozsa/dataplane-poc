@@ -15,7 +15,11 @@ typedef enum {
     LOG_ERROR = 3
 } log_level_t;
 
+#ifdef DEBUG
+#define LOG_LEVEL LOG_DEBUG
+#else
 #define LOG_LEVEL LOG_INFO
+#endif /*DEBUG*/
 
 bool at_log_level(log_level_t l);
 

@@ -35,37 +35,77 @@ void io_uring_prep_read_multishot(struct io_uring_sqe *sqe,
 #define OP_TYPE_UDP_SEND    4
 
 
-#define RING_DEPTH                 64
-#define BUF_SIZE                 1600
-#define N_BUFS      (RING_DEPTH * 16)
+#define RING_DEPTH    128
 
 
-// Buffer pool group ID
-#define BUF_BGID  1
 
+// Buffer ring for multishot ops
+#define BR_BGID                    1
+//#define BR_N_BUFS  (RING_DEPTH * 16)
+#define BR_N_BUFS  (RING_DEPTH * 32)
+
+// io_op pool size
+#if defined(USE_MULTI_RECV) || defined(USE_MULTI_READ)
+#define N_IO_OPS   (16 * RING_DEPTH)
+#else
+#define N_IO_OPS   (2 * RING_DEPTH)
+#endif
+
+// Pauload buffer size. Assuming TUN MTU 1400 and UDP link MTU 1500
+// Normal payload: IP packet from TUN
+// DTLS encryption overhead: max 45 bytes
+// IP + UDP header : 40(max assumed) + 8
+// Normal UDP packet size: 1400(tun) + 45(dtls) + 40(iph) + 8(udph) < 1500 bytes
+// We use 1600 because multishot ops places address (and
+// control info) into the provided buffers, too.
+// Also, we can have larger UDP payloads during the DTLS handshake.
+#define BUF_SIZE      1600
+
+// Number of bufs for single-shot ops
+#define N_BUFS    N_IO_OPS
+
+
+// buffer pool items (for single-shot ops)
+struct buf_addr_t {
+    uint8_t buf[BUF_SIZE];
+    struct sockaddr_storage addr;
+    struct buf_addr_t *next; // next io_buf_t in the free pool
+};
+typedef struct buf_addr_t buf_addr_t;
 
 // I/O operation context
-typedef struct {
+struct io_op_t {
     int op_type;
     int fd;  // Fle descriptor for this operation
     bool is_multi;
     uint8_t *buffer;
     int data_len;
-    int buf_idx;
+    int buf_idx; // if buffer is from multishot buffer ring
+    buf_addr_t *buf_addr; // if buffer is from single-shot pool
     struct msghdr msg;
     struct iovec iov;
     struct sockaddr_storage *addr;
     socklen_t addr_len;
-} io_op_t;
+    struct io_op_t *next; // next op in the free pool
+};
+typedef struct io_op_t io_op_t;
+
+// stats
+typedef struct {
+    int multi_recv_rearmed; 
+} io_stats_t;
 
 // io-uring context
 typedef struct {
     struct io_uring ring;
     unsigned queue_depth;
-    uint8_t *bufs;
+    io_op_t *io_op_pool;
     int buf_size;
-    int n_bufs;
+    buf_addr_t *buf_addr_pool;
+    int br_n_bufs;
+     uint8_t *br_bufs;
     struct io_uring_buf_ring *br;
+    io_stats_t stats;
 } iouring_ctx_t;
 
 /**
@@ -74,26 +114,6 @@ typedef struct {
  * @return Pointer to iouring_ctx_t on success, NULL on failure
  */
 iouring_ctx_t* iouring_init(unsigned queue_depth);
-
-/**
- * Alloc buffers
- */
-int iouring_alloc_buffers(iouring_ctx_t *ctx);
-
-/**
- * Allocate buffer ring
- */
-int iouring_alloc_multishot_buffers(iouring_ctx_t *ctx, int buf_size, int n_bufs);
-
-/**
- * Free buffer ring
- */
-void  iouring_free_buffer_ring(iouring_ctx_t *ctx);
-
-/**
- * Recycle buffer
- */
-void iouring_recycle_buffer(iouring_ctx_t *ctx, io_op_t *op);
 
 /**
  * Create and submoit a multishot recvmg request
@@ -142,7 +162,7 @@ int iouring_submit_tun_read(iouring_ctx_t *ctx, io_op_t *op);
  * @return 0 on success, -1 on failure
  */
 int iouring_submit_tun_write(iouring_ctx_t *ctx, io_op_t *op,
-                             const uint8_t *data, size_t len);
+                             const uint8_t *data, int len);
 
 /**
  * Submit a UDP receive operation
@@ -165,7 +185,7 @@ int iouring_submit_udp_recv(iouring_ctx_t *ctx, io_op_t *op);
  */
 int iouring_submit_udp_send(iouring_ctx_t *ctx, io_op_t *op,
                             const struct sockaddr *addr, socklen_t addr_len,
-                            const uint8_t *data, size_t len);
+                            const uint8_t *data, int len);
 
 /**
  * Wait for a completion event
@@ -203,7 +223,7 @@ void iouring_cleanup(iouring_ctx_t *ctx);
  * @param is_multi True if it is a multi-shot I/O operation
  * @return Pointer to io_op_t on success, NULL on failure
  */
-io_op_t* io_op_alloc(int op_typ, int fd, bool is_multi);
+io_op_t* io_op_alloc(iouring_ctx_t *ctx, int op_typ, int fd, bool is_multi);
 
 /**
  * Free I/O operation context

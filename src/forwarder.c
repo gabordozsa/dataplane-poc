@@ -39,12 +39,6 @@ forwarder_ctx_t *forwarder_create(const char *remote_host, uint16_t remote_port,
         return NULL;
     }
 
-    // Alloc buffers
-    int ret = iouring_alloc_buffers(ctx->uring_ctx);
-     if (ret != 0) {
-        return NULL;
-    }
-
     // Initialize OpenSSL
     dtls_library_init();
 
