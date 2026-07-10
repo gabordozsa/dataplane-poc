@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(dtls_vpn_tunnel C)
+project(dtls_tunnel C)
 
 # Set C standard
 set(CMAKE_C_STANDARD 11)
@@ -35,28 +35,28 @@ set(COMMON_SOURCES
 )
 
 # Create static library for common code
-add_library(dtls_vpn_common STATIC ${COMMON_SOURCES})
-target_link_libraries(dtls_vpn_common
+add_library(dtls_common STATIC ${COMMON_SOURCES})
+target_link_libraries(dtls_common
     ${OPENSSL_LIBRARIES}
     ${LIBURING_LIBRARIES}
 )
 
-# VPN Server executable
-add_executable(vpn_server
+# Edge Server executable
+add_executable(edge_server
     src/server.c
 )
-target_link_libraries(vpn_server
-    dtls_vpn_common
+target_link_libraries(edge_server
+    dtls_common
     ${OPENSSL_LIBRARIES}
     ${LIBURING_LIBRARIES}
 )
 
-# VPN Client executable
-add_executable(vpn_client
+# Edge Client executable
+add_executable(edge_client
     src/client.c
 )
-target_link_libraries(vpn_client
-    dtls_vpn_common
+target_link_libraries(edge_client
+    dtls_common
     ${OPENSSL_LIBRARIES}
     ${LIBURING_LIBRARIES}
 )
@@ -66,41 +66,22 @@ add_executable(dtls_forwarder
     src/forwarder.c
 )
 target_link_libraries(dtls_forwarder
-    dtls_vpn_common
-    ${OPENSSL_LIBRARIES}
-    ${LIBURING_LIBRARIES}
-)
-
-# Example programs
-add_executable(example_server
-    examples/vpn_server.c
-)
-target_link_libraries(example_server
-    dtls_vpn_common
-    ${OPENSSL_LIBRARIES}
-    ${LIBURING_LIBRARIES}
-)
-
-add_executable(example_client
-    examples/vpn_client.c
-)
-target_link_libraries(example_client
-    dtls_vpn_common
+    dtls_common
     ${OPENSSL_LIBRARIES}
     ${LIBURING_LIBRARIES}
 )
 
 # Installation
-install(TARGETS vpn_server vpn_client dtls_forwarder
+install(TARGETS edge_server edge_client dtls_forwarder
     RUNTIME DESTINATION bin
 )
 
-install(TARGETS dtls_vpn_common
+install(TARGETS dtls_common
     ARCHIVE DESTINATION lib
 )
 
 install(DIRECTORY include/
-    DESTINATION include/dtls_vpn
+    DESTINATION include/dtls
     FILES_MATCHING PATTERN "*.h"
 )
 

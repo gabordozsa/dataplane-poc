@@ -1,5 +1,5 @@
 # Multi-stage build for DTLS VPN Server
-FROM ubuntu:22.04 AS builder
+FROM ubuntu:24.04 AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -7,8 +7,7 @@ RUN apt-get update && apt-get install -y \
     cmake \
     libssl-dev \
     liburing-dev \
-    pkg-config \
-    && rm -rf /var/lib/apt/lists/*
+    pkg-config
 
 # Set working directory
 WORKDIR /build
@@ -21,25 +20,26 @@ COPY certs/ certs/
 
 # Build the project
 RUN mkdir build && cd build && \
-    cmake .. && \
-    make server
+    cmake  -DCMAKE_BUILD_TYPE=Release .. && \
+    make
 
 # Runtime stage
-FROM ubuntu:22.04
+FROM ubuntu:24.04
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     libssl3 \
     liburing2 \
     iproute2 \
-    iptables \
-    && rm -rf /var/lib/apt/lists/*
+    iptables
 
 # Create directory for certificates
 RUN mkdir -p /app/certs
 
 # Copy binary from builder
-COPY --from=builder /build/build/server /app/server
+COPY --from=builder /build/build/edge_server /build/build/edge_client /app/
+COPY --from=builder /build/build/dtls_forwarder /app/
+
 
 # Copy certificates
 COPY --from=builder /build/certs/ /app/certs/
@@ -47,13 +47,12 @@ COPY --from=builder /build/certs/ /app/certs/
 # Set working directory
 WORKDIR /app
 
-# Expose DTLS port
-EXPOSE 4433/udp
+
 
 # Add capabilities for TUN device creation
 # Note: Container must be run with --cap-add=NET_ADMIN --device=/dev/net/tun
 
 # Default command
-CMD ["./server", "4433", "certs/server_cert.pem", "certs/server_key.pem", "10.9.0.254"]
+CMD ["./edge_server", "4433", "certs/server_cert.pem", "certs/server_key.pem", "10.9.0.254"]
 
 # Made with Bob
