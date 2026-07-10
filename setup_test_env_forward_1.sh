@@ -7,7 +7,11 @@ set -e
 
 
 CLIENT_IP=192.168.100.1
+CLIENT_TUN_IP=10.8.0.1
+
 SERVER_IP=192.168.100.2
+SERVER_PORT=4433
+SERVER_TUN_IP=10.9.0.254
 
 FORWARD_IP_1=192.168.100.3
 FORWARD_IP_2=192.168.100.4
@@ -82,13 +86,13 @@ echo "  server  namespace: ${SERVER_IP} (veth3)"
 echo "  forward namespace: ${FORWARD_IP_1} (veth1) ${FORWARD_IP_2} (veth2)"
 echo ""
 echo "To run the server:"
-echo "  sudo ip netns exec server ./build/vpn_server 4433 certs/server_cert.pem certs/server_key.pem 10.9.0.254"
+echo "  sudo ip netns exec server ./build/vpn_server ${SERVER_PORT} certs/server_cert.pem certs/server_key.pem ${SERVER_TUN_IP}"
 echo ""
 echo "To run the forwarder:"
-echo "  sudo ip netns exec forward ./build/dtls_forwarder ${FORWARD_IN_PORT} ${FORWARD_OUT_PORT}  certs/forwarder_cert.pem certs/forwarder_key.pem  ${SERVER_IP} 4433"
+echo "  sudo ip netns exec forward ./build/dtls_forwarder ${FORWARD_IN_PORT} ${FORWARD_OUT_PORT}  certs/forwarder_cert.pem certs/forwarder_key.pem  ${SERVER_IP} ${SERVER_PORT}"
 echo ""
 echo "To run the client (in another terminal):"
-echo "  sudo ip netns exec client ./build/vpn_client ${FORWARD_IP_1} ${FORWARD_IN_PORT}  10.8.0.1"
+echo "  sudo ip netns exec client ./build/vpn_client ${FORWARD_IP_1} ${FORWARD_IN_PORT}  ${CLIENT_TUN_IP}"
 echo ""
 echo "Create route for client (-> to make rp_filter happy, i.e. server TUN addr can be accessed via tun0):"
 echo "  sudo ip netns exec client ip route add 10.9.0.0/24 dev tun0"
@@ -96,19 +100,19 @@ echo "Create route for server (-> to make reply IP from http server to find tun1
 echo "  sudo ip netns exec server ip route add 10.8.0.0/24 dev tun1"
 echo""
 echo "To test with ping (after VPN is connected):"
-echo "  sudo ip netns exec client ping  10.9.0.254"
+echo "  sudo ip netns exec client ping  ${SERVER_TUN_IP}"
 echo ""
 echo "To run HTTP server in server namespace:"
-echo "  sudo ip netns exec server python3 -m http.server --bind 10.9.0.254 2222"
+echo "  sudo ip netns exec server python3 -m http.server --bind ${SERVER_TUN_IP} 2222"
 echo ""
 echo "To test HTTP (from client namespace):"
-echo "  sudo ip netns exec client curl -v http://10.9.0.254:2222"
+echo "  sudo ip netns exec client curl -v http://${SERVER_TUN_IP}:2222"
 echo ""
 echo "iperf3 server:"
-echo "   sudo ip netns exec server iperf3 -s -B 10.9.0.254"
+echo "   sudo ip netns exec server iperf3 -s -B ${SERVER_TUN_IP}"
 echo ""
 echo "iperf3 client:"
-echo "   sudo ip netns exec client iperf3 -t 4 -c 10.9.0.254"
+echo "   sudo ip netns exec client iperf3 -t 4 -c ${SERVER_TUN_IP}"
 echo ""
 echo "To cleanup:"
 echo "  $0 clean"
