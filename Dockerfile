@@ -20,7 +20,7 @@ COPY certs/ certs/
 
 # Build the project
 RUN mkdir build && cd build && \
-    cmake  -DCMAKE_BUILD_TYPE=Release .. && \
+    cmake  -DCMAKE_BUILD_TYPE=Debug .. && \
     make
 
 # Runtime stage
@@ -31,7 +31,8 @@ RUN apt-get update && apt-get install -y \
     libssl3 \
     liburing2 \
     iproute2 \
-    iptables
+    iputils-ping \
+    iperf3
 
 # Create directory for certificates
 RUN mkdir -p /app/certs
