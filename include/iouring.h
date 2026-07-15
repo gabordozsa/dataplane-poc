@@ -35,7 +35,7 @@ void io_uring_prep_read_multishot(struct io_uring_sqe *sqe,
 #define OP_TYPE_UDP_SEND    4
 
 
-#define RING_DEPTH    128
+#define RING_DEPTH    1024
 
 // Buffer ring for multishot ops
 #define BR_BGID                    1
@@ -46,7 +46,7 @@ void io_uring_prep_read_multishot(struct io_uring_sqe *sqe,
 #if USE_MULTI_RECV || USE_MULTI_READ
 #define N_IO_OPS   (16 * RING_DEPTH)
 #else
-#define N_IO_OPS   (2 * RING_DEPTH)
+#define N_IO_OPS   (RING_DEPTH + 4)
 #endif
 
 // Pauload buffer size. Assuming TUN MTU 1400 and UDP link MTU 1500
@@ -63,7 +63,7 @@ void io_uring_prep_read_multishot(struct io_uring_sqe *sqe,
 #define N_BUFS    N_IO_OPS
 
 // Number of initial single-shot TUN-read and UDV-recvmsg ops posted
-#define N_INITIAL_RECV_OPS (RING_DEPTH - 4)
+#define N_INITIAL_RECV_OPS ((RING_DEPTH - 4) / 2)
 
 
 // buffer pool items (for single-shot ops)
