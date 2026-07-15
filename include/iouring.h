@@ -37,15 +37,13 @@ void io_uring_prep_read_multishot(struct io_uring_sqe *sqe,
 
 #define RING_DEPTH    128
 
-
-
 // Buffer ring for multishot ops
 #define BR_BGID                    1
 //#define BR_N_BUFS  (RING_DEPTH * 16)
 #define BR_N_BUFS  (RING_DEPTH * 32)
 
 // io_op pool size
-#if defined(USE_MULTI_RECV) || defined(USE_MULTI_READ)
+#if USE_MULTI_RECV || USE_MULTI_READ
 #define N_IO_OPS   (16 * RING_DEPTH)
 #else
 #define N_IO_OPS   (2 * RING_DEPTH)
@@ -63,6 +61,9 @@ void io_uring_prep_read_multishot(struct io_uring_sqe *sqe,
 
 // Number of bufs for single-shot ops
 #define N_BUFS    N_IO_OPS
+
+// Number of initial single-shot TUN-read and UDV-recvmsg ops posted
+#define N_INITIAL_RECV_OPS (RING_DEPTH - 4)
 
 
 // buffer pool items (for single-shot ops)

@@ -354,7 +354,7 @@ int iouring_initial_udp_recvs(iouring_ctx_t *ctx, int fd) {
         return ret;
     }
 
-    int num_recv_ops = 8;
+    int num_recv_ops = N_INITIAL_RECV_OPS;
     for (int i = 0; i < num_recv_ops; i++) {
         io_op_t *op = io_op_alloc(ctx, OP_TYPE_UDP_RECV, fd, false /*is_multi*/);
         if (op) {
@@ -375,7 +375,7 @@ int iouring_initial_tun_reads(iouring_ctx_t *ctx, int fd) {
         return ret;
     }
 
-    int num_recv_ops = 8;
+    int num_recv_ops = N_INITIAL_RECV_OPS;
     for (int i = 0; i < num_recv_ops; i++) {
         io_op_t *op = io_op_alloc(ctx, OP_TYPE_TUN_READ, fd, false /*is_multi*/);
         if (op) {

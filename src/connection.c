@@ -225,8 +225,8 @@ int do_dtls_handshake(iouring_ctx_t *uring_ctx, dtls_connection_t *conn) {
                     assert(op->addr_len > 0);
                     memcpy(&conn->addr, op->addr, op->addr_len);
                     conn->addr_len = op->addr_len;
-                    log_debug("Connection address is set to %s (len %d fd %d)", 
-                               addr_to_string(&conn->addr), conn->addr_len, conn->udp_fd); 
+                    log_debug("Connection address is set to %s (len %d fd %d)",
+                               addr_to_string((struct sockaddr *)&conn->addr), conn->addr_len, conn->udp_fd);
                 }
 
                 ret = BIO_write(conn->rbio, op->buffer, op->data_len);
