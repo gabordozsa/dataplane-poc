@@ -46,7 +46,7 @@ void io_uring_prep_read_multishot(struct io_uring_sqe *sqe,
 #if USE_MULTI_RECV || USE_MULTI_READ
 #define N_IO_OPS   (16 * RING_DEPTH)
 #else
-#define N_IO_OPS   (RING_DEPTH + 4)
+#define N_IO_OPS   (RING_DEPTH * 2)
 #endif
 
 // Pauload buffer size. Assuming TUN MTU 1400 and UDP link MTU 1500
