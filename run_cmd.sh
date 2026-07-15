@@ -12,11 +12,12 @@ FORWARD_2_IP=10.15.229.129
 FORWARD_IN_PORT=5000
 FORWARD_OUT_PORT=5010
 
-PROC=$1
+#PLATFORM=podman
 
+PROC="$1"
+PLATFORM="$2"
 
-
-case $PROC in
+case "$PROC" in
     poc_server)
         CMD="./edge_server ${SERVER_PORT} certs/server_cert.pem certs/server_key.pem ${SERVER_TUN_IP}"
 	PORTMAP="-p ${SERVER_PORT}:${SERVER_PORT}/udp"
@@ -31,7 +32,7 @@ case $PROC in
 	PORTMAP="-p ${FORWARD_IN_PORT}:${FORWARD_IN_PORT}/udp"
         ;;
     poc_client)
-        CMD="./edge_client ${FORWARD_1_IP} ${FORWARD_IN_PORT}  ${CLIENT_TUN_IP}"
+        CMD="./edge_client  ${FORWARD_1_IP} ${FORWARD_IN_PORT}  ${CLIENT_TUN_IP}"
         CAPS="--cap-add=NET_ADMIN,NET_RAW --device /dev/net/tun"
         ;;
     *)
@@ -42,7 +43,18 @@ esac
 #IMG=quay.io/rh-ee-dgabor/dtls_poc:latest-amd64
 IMG=quay.io/rh-ee-dgabor/dtls_poc:debug-amd64
 
+case $PLATFORM in
+    podman)
+	RUN="podman run -d --security-opt="seccomp=unconfined" $CAPS $PORTMAP --name $PROC $IMG $CMD"
+	;;
+    linux)
+	RUN=$CMD
+	;;
+    *)
+	echo "Unknown platform"
+	exit 1
+	;;
+esac
 
-RUN="podman run -d --security-opt="seccomp=unconfined" $CAPS $PORTMAP --name $PROC $IMG $CMD"
 echo $RUN
-#eval $RUN
+
