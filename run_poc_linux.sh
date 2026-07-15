@@ -21,7 +21,8 @@ for h in "${HOSTS[@]}"; do
     case "$OP" in
 	run)
 	    CMD=$(./run_cmd.sh $p linux)
-	    [[ $h == "local" ]] || CMD="ssh $h $CMD"
+	     [[ $h =~ local|gabor-4 ]] && CMD="sudo  $CMD" 
+	     CMD="$h:  $CMD"
 	    ;;
 	kill)
 	    CMD="killall edge_server dtls_forwarder edge_client"
@@ -30,6 +31,10 @@ for h in "${HOSTS[@]}"; do
 	copy)
 	    CMD="scp -r certs build/edge_server build/dtls_forwarder build/edge_client $h:"
 	    [[ $h == "local" ]] && CMD=""
+	    ;;
+	route)
+	    echo "gabor-4: sudo ip route add 10.8.0.0/24 dev tun1"
+	    echo "local:   sudo ip route add 10.9.0.0/24 dev tun0"
 	    ;;
 	*)
 	    echo "Unknown command"
