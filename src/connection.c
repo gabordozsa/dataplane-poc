@@ -151,6 +151,9 @@ int dtls_decrypt_packet(dtls_connection_t *dtls,
     assert(encrypted_len < decrypted_size);
     int read = SSL_read(dtls->ssl, decrypted, encrypted_len);
     int err = SSL_get_error(dtls->ssl, read);
+    if (err == SSL_ERROR_WANT_READ) {
+        read = SSL_read(dtls->ssl, decrypted, encrypted_len);
+    }
     if (err != SSL_ERROR_NONE) {
         if (err == SSL_ERROR_ZERO_RETURN) {
         //   close_dtls(dtls);
@@ -161,6 +164,7 @@ int dtls_decrypt_packet(dtls_connection_t *dtls,
             return -1;
         }
     }
+
     log_debug("Decrypted packet, bytes: %d", read);
     return read;
 }
