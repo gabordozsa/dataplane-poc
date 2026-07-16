@@ -44,6 +44,7 @@ forwarder_ctx_t *forwarder_create(const char *remote_host, uint16_t remote_port,
 
     ctx->inbound = create_connection(CONN_ROLE_SERVER,
                                      NULL, /*host*/
+                                     0, /* remote port */
                                      inbound_port,
                                      cert_file,
                                      key_file,
