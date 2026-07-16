@@ -1,0 +1,166 @@
+#include "tun_device.h"
+#include "udp_socket.h"
+#include "iouring.h"
+#include "dtls_context.h"
+#include "connection.h"
+#include "packet_handler.h"
+#include "utils.h"
+#include "tun_udp_run.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <signal.h>
+#include <unistd.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+static volatile int running = 1;
+
+static void signal_handler(int signum) {
+    (void)signum;
+    log_info("Received signal, shutting down...");
+    running = 0;
+}
+
+void usage(const char *cmd) {
+    fprintf(stderr, "Usage: %s client <tun_ip> <server_port>  <server_ip>\n", cmd);
+    fprintf(stderr, "Usage: %s server <tun_ip> <server_port>  <cert_file> <key_file>\n", cmd);
+    exit(1);
+}
+
+int main(int argc, char **argv) {
+    if (argc < 4) {
+        usage(argv[0]);
+    }
+
+    conn_role_t role;
+    const char *tun_ip;
+    uint16_t server_port = 0;
+    const char *server_ip = NULL;
+    const char *cert_file = NULL;
+    const char *key_file = NULL;
+
+    if (strcmp(argv[1], "server") == 0) {
+        role = CONN_ROLE_SERVER;
+        if (argc != 6) {
+            usage(argv[0]);
+        }
+    } else if (strcmp(argv[1], "client") == 0) {
+        role = CONN_ROLE_CLIENT;
+        if (argc != 5) {
+            usage(argv[0]);
+        }
+    } else {
+        usage(argv[0]);
+    }
+
+    tun_ip = argv[2];
+    server_port = atoi(argv[3]);
+
+    if (role == CONN_ROLE_SERVER) {
+        cert_file = argv[4];
+        key_file = argv[5];
+    } else {
+        server_ip = argv[4];
+    }
+
+    // Set up signal handlers
+    signal(SIGINT, signal_handler);
+    signal(SIGTERM, signal_handler);
+
+    // Initialize logging
+    log_set_level(LOG_LEVEL);
+    log_info("Starting edge %s", conn_role_str(role));
+    log_info("TUN IP: %s", tun_ip);
+    log_info("Server port: %d", server_port);
+    if (role == CONN_ROLE_SERVER) {
+        log_info("Certificate: %s", cert_file);
+        log_info("Private key: %s", key_file);
+    } else {
+         log_info("Server IP %s", server_ip);
+    }
+
+    // Initialize OpenSSL
+    //dtls_library_init();
+
+    const char *remote_host;
+    uint16_t remote_port, local_port;
+    const char *tun_ifname;
+    if (role == CONN_ROLE_CLIENT) {
+        local_port = 0;
+        remote_port = server_port;
+        remote_host = server_ip;
+        tun_ifname = "tun0";
+    } else {
+        local_port = server_port;
+        remote_port = 0;
+        remote_host = NULL;
+        tun_ifname = "tun1";
+    }
+
+    dtls_connection_t *conn = create_connection(role,
+                                                remote_host, remote_port,
+                                                local_port,
+                                                cert_file, key_file,
+                                                NULL /*ca_cert*/);
+
+
+    // Initialize io-uring
+    iouring_ctx_t *uring_ctx = iouring_init(RING_DEPTH);
+    if (!uring_ctx) {
+        log_error("Failed to initialize io-uring");
+        udp_socket_close(conn->udp_fd);
+        return 1;
+    }
+
+    // Submit initial UDP receive operations
+    int ret = iouring_initial_udp_recvs(uring_ctx, conn->udp_fd);
+    if (ret != 0) {
+        return -1;
+    };
+    log_debug("Submitted initial UDP receive operation(s)");
+
+    log_info("Starting handshake ...");
+    ret = do_dtls_handshake(uring_ctx, conn);
+    if (ret) {
+        log_error("Handshake FAILURE");
+        return 1;
+    }
+    log_info("Handshake COMPLETED");
+
+    // creating TUN device
+    tun_device_t *tun = new_tun_device(tun_ifname, tun_ip, "255.255.255.0", 1400);
+    if (!tun) {
+        log_error("Failed to create new TUN device");
+        return 1;
+    }
+
+    // Submit initial TUN read operations
+    ret = iouring_initial_tun_reads(uring_ctx, tun->fd);
+    if (ret != 0) {
+        return ret;
+    }
+    log_debug("Submitted initial TUN read operation(s)");
+
+    ret = tun_udp_run(uring_ctx, conn, tun->fd, &running);
+    if (ret < 0) {
+        log_error("ABORTED due to error");
+    }
+
+    // Cleanup
+    log_info("Cleaning up...");
+
+    SSL_free(conn->ssl);
+    dtls_context_cleanup(conn->dtls_ctx);
+    iouring_cleanup(uring_ctx);
+    udp_socket_close(conn->udp_fd);
+    tun_device_down(tun);
+    tun_device_destroy(tun);
+    //dtls_library_cleanup();
+
+    log_info("Edge %s shutdown complete", conn_role_str(role));
+
+    return 0;
+}
+
+// Made with Bob

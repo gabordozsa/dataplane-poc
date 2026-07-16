@@ -233,8 +233,8 @@ static void iouring_recycle_buffer(iouring_ctx_t *ctx, io_op_t *op) {
     io_uring_buf_ring_add(ctx->br, ctx->br_bufs +  op->buf_idx * ctx->buf_size, ctx->buf_size, op->buf_idx,
                           io_uring_buf_ring_mask(ctx->br_n_bufs), 0);
     io_uring_buf_ring_advance(ctx->br, 1);
-    op->buf_idx = -1;
     log_debug("UDP multishot recycled buffer %p idx %d",op->buffer, op->buf_idx);
+    op->buf_idx = -1;
 }
 
 static int iouring_submit_multishot_recvmsg_op(iouring_ctx_t *ctx, io_op_t *op) {

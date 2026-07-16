@@ -41,21 +41,11 @@ target_link_libraries(dtls_common
     ${LIBURING_LIBRARIES}
 )
 
-# Edge Server executable
-add_executable(edge_server
-    src/server.c
+# Edge executable
+add_executable(edge
+    src/edge.c
 )
-target_link_libraries(edge_server
-    dtls_common
-    ${OPENSSL_LIBRARIES}
-    ${LIBURING_LIBRARIES}
-)
-
-# Edge Client executable
-add_executable(edge_client
-    src/client.c
-)
-target_link_libraries(edge_client
+target_link_libraries(edge
     dtls_common
     ${OPENSSL_LIBRARIES}
     ${LIBURING_LIBRARIES}
@@ -72,7 +62,7 @@ target_link_libraries(dtls_forwarder
 )
 
 # Installation
-install(TARGETS edge_server edge_client dtls_forwarder
+install(TARGETS edge dtls_forwarder
     RUNTIME DESTINATION bin
 )
 

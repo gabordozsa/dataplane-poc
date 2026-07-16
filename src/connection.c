@@ -23,7 +23,7 @@ char *conn_role_str(conn_role_t role) {
     return NULL;
 }
 
-dtls_connection_t* create_dtls_connection(conn_role_t role,
+dtls_connection_t* create_connection(conn_role_t role,
                                           const char *remote_host,
                                           uint16_t remote_port,
                                           uint16_t local_port,
@@ -58,27 +58,25 @@ dtls_connection_t* create_dtls_connection(conn_role_t role,
         log_info("Resolved CLIENT address to %s", addr_to_string((const struct sockaddr *)&conn->addr));
     }
 
-    const char *role_str = conn_role_str(role);
-
     // create UDP socket
     conn->udp_fd = udp_socket_create();
     if (conn->udp_fd < 0) {
-        log_error("Failed to create UDP socket for %s", role_str);
+        log_error("Failed to create UDP socket for %s", conn_role_str(role));
         free(conn);
         return NULL;
     }
-    log_info("Created %s UDP socket (fd=%d)", role_str, conn->udp_fd);
+    log_info("Created %s UDP socket (fd=%d)", conn_role_str(role), conn->udp_fd);
 
     if (local_port > 0) {
         // Bind udp socket to port
         if (udp_socket_bind(conn->udp_fd, local_port, NULL) < 0) {
-            log_error("Failed to bind %s UDP socket to port %d", role_str, local_port);
+            log_error("Failed to bind %s UDP socket to port %d", conn_role_str(role), local_port);
             close(conn->udp_fd);
             free(conn);
             return NULL;
         }
         log_info("Bound %s UDP socket on port %d (fd=%d)",
-                  role_str, local_port, conn->udp_fd);
+                  conn_role_str(role), local_port, conn->udp_fd);
     }
 
     // dtls context
@@ -88,7 +86,7 @@ dtls_connection_t* create_dtls_connection(conn_role_t role,
         conn->dtls_ctx = dtls_server_context_init(cert_file, key_file);
 
     if (!conn->dtls_ctx) {
-        log_error("Failed to create %s DTLS context", role_str);
+        log_error("Failed to create %s DTLS context", conn_role_str(role));
         close(conn->udp_fd);
         free(conn);
     }
@@ -96,7 +94,7 @@ dtls_connection_t* create_dtls_connection(conn_role_t role,
     // Create SSL
     conn->ssl = dtls_create_ssl(conn->dtls_ctx);
     if (!conn->ssl) {
-        log_error("Failed to create SSL for %s", role_str);
+        log_error("Failed to create SSL for %s", conn_role_str(role));
         SSL_free(conn->ssl);
         close(conn->udp_fd);
         free(conn);
@@ -105,7 +103,7 @@ dtls_connection_t* create_dtls_connection(conn_role_t role,
 
     // Setup BIO pair
     if (dtls_setup_bio_pair(conn->ssl, &conn->rbio, &conn->wbio) < 0) {
-        log_error("Failed to setup BIO pair for %s", role_str);
+        log_error("Failed to setup BIO pair for %s", conn_role_str(role));
         SSL_free(conn->ssl);
         close(conn->udp_fd);
         free(conn);

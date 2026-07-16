@@ -29,7 +29,7 @@ for h in "${HOSTS[@]}"; do
 	    [[ $h == "local" ]] || CMD="ssh $h $CMD"
 	    ;;
 	copy)
-	    CMD="scp -r certs build/edge_server build/dtls_forwarder build/edge_client $h:"
+	    CMD="scp -r certs build/edge build/dtls_forwarder $h:"
 	    [[ $h == "local" ]] && CMD=""
 	    ;;
 	route)

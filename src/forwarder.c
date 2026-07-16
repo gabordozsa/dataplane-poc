@@ -42,24 +42,23 @@ forwarder_ctx_t *forwarder_create(const char *remote_host, uint16_t remote_port,
     // Initialize OpenSSL
     dtls_library_init();
 
-    ctx->inbound = create_dtls_connection(CONN_ROLE_SERVER,
-                                          NULL, /*remote host */
-                                          0, /* remote port */
-                                          inbound_port,
-                                          cert_file,
-                                          key_file,
-                                          NULL /* ca_file */);
+    ctx->inbound = create_connection(CONN_ROLE_SERVER,
+                                     NULL, /*host*/
+                                     inbound_port,
+                                     cert_file,
+                                     key_file,
+                                     NULL /* ca_file */);
     if (!ctx->inbound) {
         return NULL;
     }
 
-    ctx->outbound = create_dtls_connection(CONN_ROLE_CLIENT,
-                                           remote_host,
-                                           remote_port,
-                                           outbound_port,
-                                           NULL, /* cert file */
-                                           NULL, /* key file */
-                                           ca_file);
+    ctx->outbound = create_connection(CONN_ROLE_CLIENT,
+                                      remote_host,
+                                      remote_port,
+                                      outbound_port,
+                                      NULL, /* cert file */
+                                      NULL, /* key file */
+                                      ca_file);
     if (!ctx->outbound) {
         return NULL;
     }

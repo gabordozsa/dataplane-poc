@@ -19,7 +19,7 @@ PLATFORM="$2"
 
 case "$PROC" in
     poc_server)
-        CMD="./edge_server ${SERVER_PORT} certs/server_cert.pem certs/server_key.pem ${SERVER_TUN_IP}"
+        CMD="./edge server ${SERVER_TUN_IP} ${SERVER_PORT} certs/server_cert.pem certs/server_key.pem"
 	PORTMAP="-p ${SERVER_PORT}:${SERVER_PORT}/udp"
 	CAPS="--cap-add=NET_ADMIN,NET_RAW --device /dev/net/tun"
         ;;
@@ -32,7 +32,7 @@ case "$PROC" in
 	PORTMAP="-p ${FORWARD_IN_PORT}:${FORWARD_IN_PORT}/udp"
         ;;
     poc_client)
-        CMD="./edge_client  ${FORWARD_1_IP} ${FORWARD_IN_PORT}  ${CLIENT_TUN_IP}"
+        CMD="./edge client ${CLIENT_TUN_IP} ${FORWARD_IN_PORT}  ${FORWARD_1_IP}"
         CAPS="--cap-add=NET_ADMIN,NET_RAW --device /dev/net/tun"
         ;;
     *)

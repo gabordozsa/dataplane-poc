@@ -50,7 +50,7 @@ char *conn_role_str(conn_role_t role);
 /**
  * Create new dtls connection
  */
-dtls_connection_t* create_dtls_connection(conn_role_t role,
+dtls_connection_t* create_connection(conn_role_t role,
                                           const char *remote_host,
                                           uint16_t remote_port,
                                           uint16_t local_port,
