@@ -25,7 +25,7 @@ io_op_t *wait_for_recv(iouring_ctx_t *uring_ctx) {
         unsigned cqe_flags = cqe->flags;
         iouring_cqe_seen(uring_ctx, cqe);
          if (cqe_res < 0) {
-            log_error("%s failed: %s", op_type_str(op->op_type), strerror(-cqe_res));
+            log_error("%s failed: %s (is_multi %d)", op_type_str(op->op_type), strerror(-cqe_res), op->is_multi);
             return NULL;
         }
         if (!op) {

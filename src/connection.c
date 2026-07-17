@@ -150,7 +150,11 @@ int dtls_decrypt_packet(dtls_connection_t *dtls,
     int read = SSL_read(dtls->ssl, decrypted, encrypted_len);
     int err = SSL_get_error(dtls->ssl, read);
     if (err == SSL_ERROR_WANT_READ) {
-        read = SSL_read(dtls->ssl, decrypted, encrypted_len);
+        for (int i = 0; i < 4; i++) {
+            read = SSL_read(dtls->ssl, decrypted, encrypted_len);
+            err = SSL_get_error(dtls->ssl, read);
+            if (err != SSL_ERROR_WANT_READ) break;
+        }
     }
     if (err != SSL_ERROR_NONE) {
         if (err == SSL_ERROR_ZERO_RETURN) {

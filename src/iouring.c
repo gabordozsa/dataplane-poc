@@ -141,21 +141,23 @@ static void iouring_put_buf_addr(iouring_ctx_t *ctx, buf_addr_t *buf_addr) {
     ctx->buf_addr_pool = buf_addr;
 }
 
-static int iouring_alloc_multishot_buffers(iouring_ctx_t *ctx, int buf_size, int n_bufs) {
-    /* Create buffers and buffer ring */
+static int iouring_alloc_multishot_buffers(iouring_ctx_t *ctx) {
+    const int buf_size = BUF_SIZE;
+    const int n_bufs = ctx->config->br_n_bufs;
     int pagesize = (int)sysconf(_SC_PAGESIZE);
-    if (posix_memalign((void**)&ctx->br_bufs, pagesize, buf_size * n_bufs)) {
+    void *buf_mem = NULL;
+    int ret = posix_memalign(&buf_mem, pagesize, buf_size * n_bufs);
+    if (ret != 0) {
         log_error("Could not allocate memory for io_uring buffers");
         return -1;
     }
+    ctx->br_bufs = buf_mem;
     memset((void*)ctx->br_bufs, 0, buf_size * n_bufs);
-    ctx->buf_size = buf_size;
-    ctx->br_n_bufs = n_bufs;
 
     int err = 0;
-    ctx->br = io_uring_setup_buf_ring(&ctx->ring, n_bufs, BR_BGID, 0, &err);
+    ctx->br = io_uring_setup_buf_ring(&ctx->ring, n_bufs, ctx->config->br_gid, 0, &err);
     if (!ctx->br) {
-        log_error("Could not create buffer ring");
+        log_error("Could not create buffer ring: %s", strerror(-err));
         return -1;
     }
     //io_uring_buf_ring_init(br);
@@ -165,6 +167,7 @@ static int iouring_alloc_multishot_buffers(iouring_ctx_t *ctx, int buf_size, int
 
     }
     io_uring_buf_ring_advance(ctx->br, n_bufs);
+    log_debug("Buffer ring allocated");
     return 0;
 }
 
@@ -172,7 +175,10 @@ void iouring_free_buffers(iouring_ctx_t *ctx) {
     iouring_free_io_op_pool(ctx);
     iouring_free_buf_addr_pool(ctx);
     if (USE_MULTI_RECV || USE_MULTI_READ) {
-        int ret = io_uring_free_buf_ring(&ctx->ring, ctx->br, ctx->br_n_bufs, BR_BGID);
+        int ret = io_uring_free_buf_ring(&ctx->ring,
+                                         ctx->br,
+                                         ctx->config->br_n_bufs,
+                                         ctx->config->br_gid);
         if (ret != 0) {
             log_error("Failed to free buffer ring: %s",strerror(ret));
             return;
@@ -183,20 +189,20 @@ void iouring_free_buffers(iouring_ctx_t *ctx) {
 
 static int iouring_alloc_buffers(iouring_ctx_t *ctx) {
     // alloc io_op pool
-    int ret = iouring_alloc_io_op_pool(ctx, N_IO_OPS);
+    int ret = iouring_alloc_io_op_pool(ctx, ctx->config->n_io_ops);
     if (ret != 0) {
         return -1;
     }
 
     // alloc buffer pool for sends and single shot recvs
-     ret = iouring_alloc_buf_addr_pool(ctx, N_BUFS);
+     ret = iouring_alloc_buf_addr_pool(ctx, ctx->config->n_io_ops);
      if (ret != 0) {
         return -1;
      }
 
     if (USE_MULTI_RECV || USE_MULTI_READ) {
         // buffer ring for multishot
-        ret = iouring_alloc_multishot_buffers(ctx, BUF_SIZE, BR_N_BUFS);
+        ret = iouring_alloc_multishot_buffers(ctx);
         if (ret != 0) {
             return -1;
         }
@@ -204,34 +210,49 @@ static int iouring_alloc_buffers(iouring_ctx_t *ctx) {
      return 0;
 }
 
-iouring_ctx_t* iouring_init(unsigned queue_depth) {
+iouring_ctx_t* iouring_init(iouring_config_t *c) {
     iouring_ctx_t *ctx = calloc(1, sizeof(iouring_ctx_t));
     if (!ctx) {
         log_error("Failed to allocate io-uring context");
         return NULL;
     }
 
-    ctx->queue_depth = queue_depth;
+    ctx->config = c;
 
     // Initialize io-uring
-    int ret = io_uring_queue_init(queue_depth, &ctx->ring, 0);
+    struct io_uring_params p;
+    memset(&p, 0, sizeof(struct io_uring_params));
+    // TOFO: try  IORING_SETUP_COOP_TASKRUN
+    p.flags = IORING_SETUP_CQSIZE;
+    p.cq_entries = c->cq_depth;
+
+    int ret = io_uring_queue_init_params(ctx->config->sq_depth, &ctx->ring, &p);
     if (ret < 0) {
         log_error("Failed to initialize io-uring: %s", strerror(-ret));
         free(ctx);
         return NULL;
     }
+    bool cqe_no_drop = (p.features & IORING_FEAT_NODROP);
 
-    iouring_alloc_buffers(ctx);
+    ret = iouring_alloc_buffers(ctx);
+    if (ret != 0)
+    {
+        return NULL;
+    }
 
-    log_info("Initialized io-uring with queue depth %u", queue_depth);
+    log_info("Initialized io-uring with sq depth %u, cq depth %u, cqe_no_drop %d",
+              c->sq_depth, c->cq_depth, cqe_no_drop);
 
     return ctx;
 }
 
 static void iouring_recycle_buffer(iouring_ctx_t *ctx, io_op_t *op) {
     assert(op && op->is_multi && op->buf_idx >= 0);
-    io_uring_buf_ring_add(ctx->br, ctx->br_bufs +  op->buf_idx * ctx->buf_size, ctx->buf_size, op->buf_idx,
-                          io_uring_buf_ring_mask(ctx->br_n_bufs), 0);
+    io_uring_buf_ring_add(ctx->br,
+                          ctx->br_bufs +  op->buf_idx * BUF_SIZE,
+                          BUF_SIZE,
+                          op->buf_idx,
+                          io_uring_buf_ring_mask(ctx->config->br_n_bufs), 0);
     io_uring_buf_ring_advance(ctx->br, 1);
     log_debug("UDP multishot recycled buffer %p idx %d",op->buffer, op->buf_idx);
     op->buf_idx = -1;
@@ -249,7 +270,7 @@ static int iouring_submit_multishot_recvmsg_op(iouring_ctx_t *ctx, io_op_t *op) 
     // prep be called before sge flags are set !!!!
     io_uring_prep_recvmsg_multishot(sqe, op->fd, &op->msg, 0);
     sqe->flags |= IOSQE_BUFFER_SELECT;
-    sqe->buf_group = BR_BGID;
+    sqe->buf_group = ctx->config->br_gid;
     io_uring_sqe_set_data(sqe, op);
     if (io_uring_submit(&ctx->ring) < 0) {
         log_error("Failed to submit multishot recvmsg SQE");
@@ -276,7 +297,7 @@ int iouring_multishot_recvmsg_out(iouring_ctx_t *ctx, io_op_t *op, unsigned cqe_
     }
 
     op->buf_idx = cqe_flags >> IORING_CQE_BUFFER_SHIFT;
-    uint8_t *buf = ctx->br_bufs + op->buf_idx * ctx->buf_size;
+    uint8_t *buf = ctx->br_bufs + op->buf_idx * BUF_SIZE;
     struct io_uring_recvmsg_out *mout = io_uring_recvmsg_validate(buf, op->data_len /*cqe->res*/, &op->msg);
     if (!mout) {
         log_error("Failed to validate multishot recvmsg");
@@ -314,7 +335,7 @@ int iouring_multishot_read_out(iouring_ctx_t *ctx, io_op_t *op, unsigned cqe_fla
     }
 
     op->buf_idx = cqe_flags >> IORING_CQE_BUFFER_SHIFT;
-    op->buffer = ctx->br_bufs + op->buf_idx * ctx->buf_size;
+    op->buffer = ctx->br_bufs + op->buf_idx * BUF_SIZE;
 
     if (!(cqe_flags & IORING_CQE_F_MORE)) {
         // multishot request is done
@@ -339,8 +360,8 @@ int iouring_submit_multishot_read(iouring_ctx_t *ctx, int fd) {
     }
     io_uring_sqe_set_data(sqe, op);
     io_uring_sqe_set_flags(sqe, IOSQE_BUFFER_SELECT);
-    sqe->buf_group = BR_BGID;
-    io_uring_prep_read_multishot(sqe, op->fd, 0 /*nbytes*/, 0, BR_BGID);
+    sqe->buf_group = ctx->config->br_gid;
+    io_uring_prep_read_multishot(sqe, op->fd, 0 /*nbytes*/, 0, ctx->config->br_gid);
     if (io_uring_submit(&ctx->ring) < 0) {
         log_error("Failed to submit multishot read SQE");
         return -1;
@@ -354,7 +375,7 @@ int iouring_initial_udp_recvs(iouring_ctx_t *ctx, int fd) {
         return ret;
     }
 
-    int num_recv_ops = N_INITIAL_RECV_OPS;
+    int num_recv_ops = ctx->config->n_initial_recv_ops;
     for (int i = 0; i < num_recv_ops; i++) {
         io_op_t *op = io_op_alloc(ctx, OP_TYPE_UDP_RECV, fd, false /*is_multi*/);
         if (op) {
@@ -375,7 +396,7 @@ int iouring_initial_tun_reads(iouring_ctx_t *ctx, int fd) {
         return ret;
     }
 
-    int num_recv_ops = N_INITIAL_READ_OPS;
+    int num_recv_ops = ctx->config->n_initial_read_ops;
     for (int i = 0; i < num_recv_ops; i++) {
         io_op_t *op = io_op_alloc(ctx, OP_TYPE_TUN_READ, fd, false /*is_multi*/);
         if (op) {

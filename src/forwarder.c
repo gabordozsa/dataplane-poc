@@ -12,6 +12,25 @@
 #include <arpa/inet.h>
 #include <assert.h>
 
+#define RING_DEPTH 8
+
+// Note: we use multi-shot recvmsg
+static iouring_config_t iouring_params = {
+    .sq_depth   = 8,
+    .cq_depth   = 1024,
+    .br_n_bufs  = 2048,
+    .br_gid     = 1,
+    .n_io_ops   = 1024
+};
+
+static void print_config() {
+    log_info("SQ depth %d CQ depth %d n_io_ops %d br_n_bufs %d",
+             iouring_params.sq_depth,
+             iouring_params.cq_depth,
+             iouring_params.n_io_ops,
+             iouring_params.br_n_bufs);
+}
+
 static volatile int running = 1;
 
 static void signal_handler(int signum) {
@@ -32,7 +51,7 @@ forwarder_ctx_t *forwarder_create(const char *remote_host, uint16_t remote_port,
     }
 
     // Create io-uring context
-    ctx->uring_ctx = iouring_init(256);
+    ctx->uring_ctx = iouring_init(&iouring_params);
     if (!ctx->uring_ctx) {
         log_error("Failed to create io-uring context");
         free(ctx);
@@ -230,6 +249,8 @@ int main(int argc, char **argv) {
     log_info("Private key: %s", key_file);
     log_info("CA certificate: %s", ca_file ? ca_file : "none (no client verification)");
     log_info("Remote endpoint: %s:%d", remote_host, remote_port);
+
+    print_config();
 
     // Create forwarder context
     forwarder_ctx_t *ctx = forwarder_create(remote_host, remote_port, inbound_port, outbound_port, cert_file, key_file, ca_file);

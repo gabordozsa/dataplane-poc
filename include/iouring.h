@@ -35,19 +35,6 @@ void io_uring_prep_read_multishot(struct io_uring_sqe *sqe,
 #define OP_TYPE_UDP_SEND    4
 
 
-#define RING_DEPTH    32
-
-// Buffer ring for multishot ops
-#define BR_BGID                    1
-#define BR_N_BUFS  (RING_DEPTH * 64)
-
-
-// io_op pool size
-#if USE_MULTI_RECV || USE_MULTI_READ
-#define N_IO_OPS   (16 * RING_DEPTH)
-#else
-#define N_IO_OPS   (RING_DEPTH * 2)
-#endif
 
 // Pauload buffer size. Assuming TUN MTU 1400 and UDP link MTU 1500
 // Normal payload: IP packet from TUN
@@ -59,21 +46,6 @@ void io_uring_prep_read_multishot(struct io_uring_sqe *sqe,
 // Also, we can have larger UDP payloads during the DTLS handshake.
 #define BUF_SIZE      1600
 
-// Number of bufs for single-shot ops
-#define N_BUFS    N_IO_OPS
-
-// Number of initial single-shot TUN-read and UDV-recvmsg ops posted
-#if !USE_MULTI_READ
-#define N_INITIAL_RECV_OPS ((RING_DEPTH - 4) / 2)
-#else
-#define N_INITIAL_RECV_OPS (RING_DEPTH - 4)
-#endif
-
-#if !USE_MULTI_RECV
-#define N_INITIAL_READ_OPS ((RING_DEPTH - 4) / 2)
-#else
-#define N_INITIAL_READ_OPS (RING_DEPTH - 4)
-#endif
 
 // buffer pool items (for single-shot ops)
 struct buf_addr_t {
@@ -102,18 +74,26 @@ typedef struct io_op_t io_op_t;
 
 // stats
 typedef struct {
-    int multi_recv_rearmed; 
+    int multi_recv_rearmed;
 } io_stats_t;
+
+typedef struct {
+    const int sq_depth;
+    const int cq_depth;
+    const int br_gid;    // buffer ring group id for multi-shot ops
+    const int br_n_bufs; // number of bufs in buffer ring for multi-shot ops
+    const int n_io_ops;  // size of io_op  pool
+    const int n_initial_recv_ops; // number of initial single-shot recvs submitted
+    const int n_initial_read_ops; // number of initial single-shot reads submitted
+} iouring_config_t;
 
 // io-uring context
 typedef struct {
+    iouring_config_t *config; // config params
     struct io_uring ring;
-    unsigned queue_depth;
     io_op_t *io_op_pool;
-    int buf_size;
     buf_addr_t *buf_addr_pool;
-    int br_n_bufs;
-     uint8_t *br_bufs;
+    uint8_t *br_bufs;
     struct io_uring_buf_ring *br;
     io_stats_t stats;
 } iouring_ctx_t;
@@ -123,7 +103,7 @@ typedef struct {
  * @param queue_depth Queue depth (e.g., 256)
  * @return Pointer to iouring_ctx_t on success, NULL on failure
  */
-iouring_ctx_t* iouring_init(unsigned queue_depth);
+iouring_ctx_t* iouring_init(iouring_config_t *c);
 
 /**
  * Create and submoit a multishot recvmg request

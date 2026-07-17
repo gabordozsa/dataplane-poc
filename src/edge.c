@@ -14,6 +14,27 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+#define RING_DEPTH 16
+
+// Note: we use multi-shot recvmsg
+static iouring_config_t iouring_params = {
+    .sq_depth           = RING_DEPTH,
+    .cq_depth           = 1024,
+    .br_n_bufs          = 2048,
+    .br_gid             = 1,
+    .n_io_ops           = 1024,
+    .n_initial_read_ops = RING_DEPTH - 1 // all slot but one (1 multidhot recv)
+};
+
+static void print_config() {
+    log_info("SQ depth %d CQ depth %d n_io_ops %d br_n_bufs %d",
+             iouring_params.sq_depth,
+             iouring_params.cq_depth,
+             iouring_params.n_io_ops,
+             iouring_params.br_n_bufs,
+             iouring_params.n_initial_read_ops);
+}
+
 static volatile int running = 1;
 
 static void signal_handler(int signum) {
@@ -80,6 +101,8 @@ int main(int argc, char **argv) {
          log_info("Server IP %s", server_ip);
     }
 
+    print_config();
+
     // Initialize OpenSSL
     //dtls_library_init();
 
@@ -106,7 +129,7 @@ int main(int argc, char **argv) {
 
 
     // Initialize io-uring
-    iouring_ctx_t *uring_ctx = iouring_init(RING_DEPTH);
+    iouring_ctx_t *uring_ctx = iouring_init(&iouring_params);
     if (!uring_ctx) {
         log_error("Failed to initialize io-uring");
         udp_socket_close(conn->udp_fd);
