@@ -51,6 +51,16 @@ target_link_libraries(edge
     ${LIBURING_LIBRARIES}
 )
 
+# Edge_zero executable
+add_executable(edge_zero
+    src/edge_zero.c
+)
+target_link_libraries(edge_zero
+    dtls_common
+    ${OPENSSL_LIBRARIES}
+    ${LIBURING_LIBRARIES}
+)
+
 # DTLS Forwarder executable
 add_executable(dtls_forwarder
     src/forwarder.c

@@ -27,6 +27,7 @@ typedef enum {
 // Connection structure
 typedef struct dtls_connection {
     int udp_fd;
+    conn_role_t role;
 
     dtls_ctx_t *dtls_ctx;
     SSL *ssl;
@@ -40,7 +41,7 @@ typedef struct dtls_connection {
     time_t last_activity;
 
     struct connection *next;  // For hash table chaining
-} dtls_connection_t;
+} connection_t;
 
 /**
  * Return the role name as string
@@ -48,27 +49,32 @@ typedef struct dtls_connection {
 char *conn_role_str(conn_role_t role);
 
 /**
- * Create new dtls connection
+ * Create new connection
  */
-dtls_connection_t* create_connection(conn_role_t role,
-                                          const char *remote_host,
-                                          uint16_t remote_port,
-                                          uint16_t local_port,
-                                          const char *cert_file,
-                                          const char *key_file,
-                                          const char *ca_file);
+connection_t* create_connection(conn_role_t role,
+                                const char *remote_host,
+                                uint16_t remote_port,
+                                uint16_t local_port);
+
+/**
+ * Initialize DTLS connection
+ */
+int init_dtls_connection(connection_t *conn,
+                         const char *cert_file,
+                         const char *key_file,
+                         const char *ca_file);
 
 /**
  * Decrypt udp packet payload
  */
-int dtls_decrypt_packet(dtls_connection_t *dtls,
+int dtls_decrypt_packet(connection_t *dtls,
                         const uint8_t *encrypted, int encrypted_len,
                         uint8_t *decrypted, int decrypted_len);
 
 /**
  * Encrypt udp packet payload
  */
-int dtls_encrypt_packet(dtls_connection_t *dtls,
+int dtls_encrypt_packet(connection_t *dtls,
                         const uint8_t *data, int data_len,
                         uint8_t *result, int result_size);
 
@@ -76,7 +82,7 @@ int dtls_encrypt_packet(dtls_connection_t *dtls,
 /**
  * Start and complete DTLS handshake
  */
-int do_dtls_handshake(iouring_ctx_t *uring_ctx, dtls_connection_t *conn);
+int do_dtls_handshake(iouring_ctx_t *uring_ctx, connection_t *conn);
 
 #endif // CONNECTION_H
 

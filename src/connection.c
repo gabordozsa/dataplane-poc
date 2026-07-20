@@ -23,28 +23,21 @@ char *conn_role_str(conn_role_t role) {
     return NULL;
 }
 
-dtls_connection_t* create_connection(conn_role_t role,
-                                          const char *remote_host,
-                                          uint16_t remote_port,
-                                          uint16_t local_port,
-                                          const char *cert_file,
-                                          const char *key_file,
-                                          const char *ca_file) {
-
+connection_t* create_connection(conn_role_t role,
+                                const char *remote_host,
+                                uint16_t remote_port,
+                                uint16_t local_port) {
     if (role == CONN_ROLE_CLIENT) {
         if (remote_host == NULL || remote_port == 0) {
             log_error("Remote host is NULL for CLIENT");
             return NULL;
         }
-    } else if (cert_file == NULL || key_file == NULL) {
-         log_error("Cert/key missing for SERVER");
-         return NULL;
     }
 
     // Create connection structure
-    dtls_connection_t *conn = calloc(1, sizeof(dtls_connection_t));
+    connection_t *conn = calloc(1, sizeof(connection_t));
     if (!conn) {
-        log_error("Failed to allocate dtls connection");
+        log_error("Failed to allocate connection");
         return NULL;
     }
 
@@ -78,45 +71,47 @@ dtls_connection_t* create_connection(conn_role_t role,
         log_info("Bound %s UDP socket on port %d (fd=%d)",
                   conn_role_str(role), local_port, conn->udp_fd);
     }
+    conn->role = role;
 
+    return conn;
+}
+
+int init_dtls_connection(connection_t *conn,
+                         const char *cert_file,
+                         const char *key_file,
+                         const char *ca_file) {
     // dtls context
-    if (role == CONN_ROLE_CLIENT)
+    if (conn->role == CONN_ROLE_CLIENT)
         conn->dtls_ctx = dtls_client_context_init(ca_file);
     else
         conn->dtls_ctx = dtls_server_context_init(cert_file, key_file);
 
     if (!conn->dtls_ctx) {
-        log_error("Failed to create %s DTLS context", conn_role_str(role));
-        close(conn->udp_fd);
-        free(conn);
+        log_error("Failed to create %s DTLS context", conn_role_str(conn->role));
+        return -1;
     }
 
     // Create SSL
     conn->ssl = dtls_create_ssl(conn->dtls_ctx);
     if (!conn->ssl) {
-        log_error("Failed to create SSL for %s", conn_role_str(role));
-        SSL_free(conn->ssl);
-        close(conn->udp_fd);
-        free(conn);
-        return NULL;
+        log_error("Failed to create SSL for %s", conn_role_str(conn->role));
+        return -1;
     }
 
     // Setup BIO pair
     if (dtls_setup_bio_pair(conn->ssl, &conn->rbio, &conn->wbio) < 0) {
-        log_error("Failed to setup BIO pair for %s", conn_role_str(role));
+        log_error("Failed to setup BIO pair for %s", conn_role_str(conn->role));
         SSL_free(conn->ssl);
-        close(conn->udp_fd);
-        free(conn);
-        return NULL;
+        return -1;
     }
 
     conn->state = CONN_STATE_HANDSHAKING;
     conn->last_activity = time(NULL);
 
-    return conn;
+    return 0;
 }
 
-int dtls_encrypt_packet(dtls_connection_t *dtls,
+int dtls_encrypt_packet(connection_t *dtls,
                         const uint8_t *data, int data_len,
                         uint8_t *result, int result_size) {
     int written = SSL_write(dtls->ssl, data, data_len);
@@ -133,7 +128,7 @@ int dtls_encrypt_packet(dtls_connection_t *dtls,
     return read;
 }
 
-int dtls_decrypt_packet(dtls_connection_t *dtls,
+int dtls_decrypt_packet(connection_t *dtls,
                         const uint8_t *encrypted, int encrypted_len,
                         uint8_t *decrypted, int decrypted_size) {
     int written = BIO_write(dtls->rbio, encrypted, encrypted_len);
@@ -171,7 +166,7 @@ int dtls_decrypt_packet(dtls_connection_t *dtls,
     return read;
 }
 
-int do_dtls_handshake(iouring_ctx_t *uring_ctx, dtls_connection_t *conn) {
+int do_dtls_handshake(iouring_ctx_t *uring_ctx, connection_t *conn) {
     if (!conn) {
         log_error("No connection for handshake");
         return -1;

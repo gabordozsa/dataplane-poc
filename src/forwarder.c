@@ -58,31 +58,34 @@ forwarder_ctx_t *forwarder_create(const char *remote_host, uint16_t remote_port,
         return NULL;
     }
 
-    // Initialize OpenSSL
-    dtls_library_init();
-
     ctx->inbound = create_connection(CONN_ROLE_SERVER,
                                      NULL, /*host*/
                                      0, /* remote port */
-                                     inbound_port,
-                                     cert_file,
-                                     key_file,
-                                     NULL /* ca_file */);
+                                     inbound_port);
     if (!ctx->inbound) {
+        free(ctx);
+        return NULL;
+    }
+
+    int ret = init_dtls_connection( ctx->inbound, cert_file, key_file, NULL /*ca_cert*/);
+    if (!ret != 0) {
+        free(ctx);
         return NULL;
     }
 
     ctx->outbound = create_connection(CONN_ROLE_CLIENT,
                                       remote_host,
                                       remote_port,
-                                      outbound_port,
-                                      NULL, /* cert file */
-                                      NULL, /* key file */
-                                      ca_file);
+                                      outbound_port);
     if (!ctx->outbound) {
         return NULL;
     }
 
+    ret = init_dtls_connection( ctx->outbound, NULL, NULL, ca_file);
+    if (!ret != 0) {
+        free(ctx);
+        return NULL;
+    }
     return ctx;
 }
 
@@ -148,8 +151,8 @@ static int forward_udp_packet(forwarder_ctx_t *ctx, io_op_t *op) {
         return -1;
     }
 
-    dtls_connection_t *recv_conn = NULL;
-    dtls_connection_t *forward_conn = NULL;
+    connection_t *recv_conn = NULL;
+    connection_t *forward_conn = NULL;
 
     if (from_inbound_socket) {
         // Packet on inbound socket
@@ -296,7 +299,6 @@ int main(int argc, char **argv) {
     // Cleanup
     log_info("Cleaning up...");
     forwarder_destroy(ctx);
-    dtls_library_cleanup();
 
     log_info("Forwarder shutdown complete");
     return ret;

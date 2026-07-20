@@ -23,19 +23,6 @@ static int verify_cookie(SSL *ssl, const unsigned char *cookie, unsigned int coo
     return (cookie_len == 16) ? 1 : 0;
 }
 
-void dtls_library_init(void) {
-    SSL_library_init();
-    SSL_load_error_strings();
-    OpenSSL_add_all_algorithms();
-    log_info("Initialized OpenSSL library");
-}
-
-void dtls_library_cleanup(void) {
-    EVP_cleanup();
-    ERR_free_strings();
-    log_info("Cleaned up OpenSSL library");
-}
-
 dtls_ctx_t* dtls_server_context_init(const char *cert_file, const char *key_file) {
     if (!cert_file || !key_file) {
         log_error("Certificate and key files required for server");

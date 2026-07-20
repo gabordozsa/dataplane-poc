@@ -15,16 +15,16 @@ for h in "${HOSTS[@]}"; do
     #echo $h:$p
     case "$OP" in
 	run)
-	    CMD=$(./run_cmd_edge.sh $p linux)
+	    CMD=$(./run_cmd_edge_zero.sh $p linux)
 	     [[ $h =~ local|gabor-4 ]] && CMD="sudo  $CMD" 
 	     CMD="$h:  $CMD"
 	    ;;
 	kill)
-	    CMD="killall edge"
+	    CMD="killall edge_zero"
 	    [[ $h == "local" ]] || CMD="ssh $h $CMD"
 	    ;;
 	copy)
-	    CMD="scp -r certs build/edge $h:"
+	    CMD="scp -r certs build/edge_zero $h:"
 	    [[ $h == "local" ]] && CMD=""
 	    ;;
 	route)

@@ -82,7 +82,7 @@ io_op_t *wait_for_recv(iouring_ctx_t *uring_ctx) {
     return op;
 }
 
-int dtls_encrypt_and_send_udp(dtls_connection_t *conn,
+int dtls_encrypt_and_send_udp(connection_t *conn,
                               const uint8_t *data, size_t len,
                               iouring_ctx_t *uring_ctx) {
     if (at_log_level(LOG_DEBUG)) {
@@ -110,7 +110,7 @@ int dtls_encrypt_and_send_udp(dtls_connection_t *conn,
     return 0;
 }
 
-int dtls_decrypt_and_write_tun(dtls_connection_t *conn,
+int dtls_decrypt_and_write_tun(connection_t *conn,
                                int tun_fd,
                                const uint8_t *encrypted, int encrypted_len,
                                iouring_ctx_t *uring_ctx) {
@@ -141,4 +141,46 @@ int dtls_decrypt_and_write_tun(dtls_connection_t *conn,
 
     return 0;
 }
-// Made with Bob
+
+
+int tun_to_udp(connection_t *conn,
+               io_op_t *op,
+               iouring_ctx_t *uring_ctx) {
+    if (at_log_level(LOG_DEBUG)) {
+        print_ip_packet_info(op->buffer, op->data_len, "TUN -> UDP");
+    }
+
+    io_op_t *send_op = io_op_alloc_buf(uring_ctx, OP_TYPE_UDP_SEND, conn->udp_fd, false /*is_multi*/, op /*buf_owner*/);
+    if (!send_op) {
+        return -1;
+    }
+
+    int ret = iouring_submit_udp_send(uring_ctx, send_op,
+                                      (struct sockaddr *)&conn->addr, conn->addr_len,
+                                      NULL /*data is already in place*/, send_op->data_len);
+    if (ret < 0) {
+        io_op_free(uring_ctx, &send_op);
+        return -1;
+    }
+    return 0;
+}
+
+int udp_to_tun(int tun_fd,
+               io_op_t *op,
+               iouring_ctx_t *uring_ctx) {
+    if (at_log_level(LOG_DEBUG)) {
+        print_ip_packet_info(op->buffer, op->data_len, "UDP -> TUN");
+    }
+
+    io_op_t *send_op = io_op_alloc_buf(uring_ctx, OP_TYPE_TUN_WRITE, tun_fd, false /*is_multi*/, op /*buf_owner*/);
+    if (!send_op) {
+        return -1;
+    }
+
+    int ret = iouring_submit_tun_write(uring_ctx, send_op, NULL /*data is in place*/, op->data_len);
+    if (ret < 0) {
+        io_op_free(uring_ctx, &send_op);
+        return -1;
+    }
+    return 0;
+}

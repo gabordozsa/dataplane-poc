@@ -72,11 +72,6 @@ const char* dtls_get_error_string(SSL *ssl, int ret);
  */
 void dtls_library_init(void);
 
-/**
- * Cleanup OpenSSL library (call once at shutdown)
- */
-void dtls_library_cleanup(void);
-
 #endif // DTLS_CONTEXT_H
 
 // Made with Bob

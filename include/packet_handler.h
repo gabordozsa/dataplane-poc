@@ -14,14 +14,14 @@
  * @param uring_ctx io-uring context
  * @return 0 on success, -1 on failure
  */
-int dtls_encrypt_and_send_udp(dtls_connection_t *conn, const uint8_t *data,
+int dtls_encrypt_and_send_udp(connection_t *conn, const uint8_t *data,
                               size_t len, iouring_ctx_t *uring_ctx);
 
 
 /**
  * Decrypt and write packet to TUN
  */
-int dtls_decrypt_and_write_tun(dtls_connection_t *conn,
+int dtls_decrypt_and_write_tun(connection_t *conn,
                                int tun_fd,
                                const uint8_t *encrypted, int encrypted_len,
                                iouring_ctx_t *uring_ctx);
@@ -34,9 +34,21 @@ io_op_t *wait_for_recv(iouring_ctx_t *uring_ctx);
 /**
  * Send UDP datagram by io_uring
  */
-int send_udp(iouring_ctx_t *uring_ctx, dtls_connection_t *conn,
+int send_udp(iouring_ctx_t *uring_ctx, connection_t *conn,
              const uint8_t *encrypted, int encrypted_len);
 
 #endif // PACKET_HANDLER_H
 
-// Made with Bob
+/**
+ * Forward IP packet from TUN to UDP socket
+ */
+int tun_to_udp(connection_t *conn,
+               io_op_t *op,
+               iouring_ctx_t *uring_ctx);
+
+/**
+ * Forward IP packet from UDP socket to TUN
+ */
+int udp_to_tun(int tun_fd,
+               io_op_t *op,
+               iouring_ctx_t *uring_ctx);

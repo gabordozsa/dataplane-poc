@@ -247,14 +247,14 @@ iouring_ctx_t* iouring_init(iouring_config_t *c) {
 }
 
 static void iouring_recycle_buffer(iouring_ctx_t *ctx, io_op_t *op) {
-    assert(op && op->is_multi && op->buf_idx >= 0);
+    assert(op && !op->buf_addr && op->buf_idx >= 0);
     io_uring_buf_ring_add(ctx->br,
                           ctx->br_bufs +  op->buf_idx * BUF_SIZE,
                           BUF_SIZE,
                           op->buf_idx,
                           io_uring_buf_ring_mask(ctx->config->br_n_bufs), 0);
     io_uring_buf_ring_advance(ctx->br, 1);
-    log_debug("UDP multishot recycled buffer %p idx %d",op->buffer, op->buf_idx);
+    log_debug("Recycled br buffer %p idx %d",op->buffer, op->buf_idx);
     op->buf_idx = -1;
 }
 
@@ -646,6 +646,10 @@ void iouring_cleanup(iouring_ctx_t *ctx) {
 }
 
 io_op_t* io_op_alloc(iouring_ctx_t *ctx, int op_type, int fd, bool is_multi) {
+    return io_op_alloc_buf(ctx, op_type, fd, is_multi, NULL /*buf_owner*/);
+}
+
+io_op_t* io_op_alloc_buf(iouring_ctx_t *ctx, int op_type, int fd, bool is_multi, io_op_t *buf_owner) {
     io_op_t *op = iouring_get_io_op(ctx);
     if (!op) {
         return NULL;
@@ -654,16 +658,34 @@ io_op_t* io_op_alloc(iouring_ctx_t *ctx, int op_type, int fd, bool is_multi) {
     op->is_multi = is_multi;
     op->op_type = op_type;
     op->fd = fd;
+
     if (!is_multi) {
-        buf_addr_t *buf_addr = iouring_get_buf_addr(ctx);
-        if (!buf_addr) {
-            log_error("Failed to allocate I/O buffer and address");
-            iouring_put_io_op(ctx, op);
-            return NULL;
+        if(!buf_owner) {
+            buf_addr_t *buf_addr = iouring_get_buf_addr(ctx);
+            if (!buf_addr) {
+                log_error("Failed to allocate I/O buffer and address");
+                iouring_put_io_op(ctx, op);
+                return NULL;
+            }
+            op->buf_addr = buf_addr;
+            op->buffer = buf_addr->buf;
+            op->addr = &buf_addr->addr;
+        } else {
+            if (!buf_owner->is_multi) {
+                buf_addr_t * buf_addr = buf_owner->buf_addr;
+                op->data_len = buf_owner->data_len;
+                op->buf_addr = buf_addr;
+                op->buffer = buf_addr->buf;
+                op->addr = &buf_addr->addr;
+                buf_owner->buf_addr = NULL;
+            } else {
+                // data is in an io_uring managed br buffer
+                op->buf_idx = buf_owner->buf_idx;
+                op->buffer = buf_owner->buffer;
+                op->data_len = buf_owner->data_len;
+                buf_owner->buf_idx = DO_NOT_FREE;
+            }
         }
-        op->buffer = buf_addr->buf;
-        op->addr = &buf_addr->addr;
-        op->buf_addr = buf_addr;
     }
     return op;
 }
@@ -674,7 +696,7 @@ void io_op_free(iouring_ctx_t *ctx, io_op_t **op) {
             if ((*op)->buf_idx >= 0) {
                 // only recycle buffer, multishot op is still in use
                 iouring_recycle_buffer(ctx, *op);
-            } else {
+            } else if ((*op)->buf_idx != DO_NOT_FREE) {
                 log_debug("Freeing multishot op");
                 iouring_put_io_op(ctx, *op);
                 *op = NULL;
@@ -682,7 +704,13 @@ void io_op_free(iouring_ctx_t *ctx, io_op_t **op) {
             //memset(&(*op)->msg, 0, sizeof((*op)->msg));
             //(*op)->msg.msg_namelen = sizeof(struct sockaddr_storage);
         } else {
-            iouring_put_buf_addr(ctx, (*op)->buf_addr);
+            assert(!(*op)->buf_addr || (*op)->buf_idx == -1);
+            if ((*op)->buf_addr) {
+                iouring_put_buf_addr(ctx, (*op)->buf_addr);
+            } else if ( (*op)->buf_idx >= 0) {
+                // an io_uring.manged br buffer got transfered to a send op
+                iouring_recycle_buffer(ctx, *op);
+            }
             iouring_put_io_op(ctx, *op);
             *op = NULL;
         }

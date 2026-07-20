@@ -14,8 +14,8 @@ typedef struct forwarder_ctx {
     iouring_ctx_t *uring_ctx;        // io-uring context
 
     // Two connections
-    dtls_connection_t *outbound;  // Connection we initiate
-    dtls_connection_t *inbound;   // Connection we accept
+    connection_t *outbound;  // Connection we initiate
+    connection_t *inbound;   // Connection we accept
 } forwarder_ctx_t;
 
 /**
@@ -57,8 +57,8 @@ int forwarder_run(forwarder_ctx_t *ctx);
  * @return 0 on success, -1 on failure
  */
 int forwarder_forward_packet(forwarder_ctx_t *ctx,
-                             dtls_connection_t *from_conn,
-                             dtls_connection_t *to_conn,
+                             connection_t *from_conn,
+                             connection_t *to_conn,
                              const uint8_t *data, size_t len);
 
 

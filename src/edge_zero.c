@@ -45,7 +45,7 @@ static void signal_handler(int signum) {
 
 void usage(const char *cmd) {
     fprintf(stderr, "Usage: %s client <tun_ip> <server_port>  <server_ip>\n", cmd);
-    fprintf(stderr, "Usage: %s server <tun_ip> <server_port>  <cert_file> <key_file>\n", cmd);
+    fprintf(stderr, "Usage: %s server <tun_ip> <server_port>\n", cmd);
     exit(1);
 }
 
@@ -58,12 +58,10 @@ int main(int argc, char **argv) {
     const char *tun_ip;
     uint16_t server_port = 0;
     const char *server_ip = NULL;
-    const char *cert_file = NULL;
-    const char *key_file = NULL;
 
     if (strcmp(argv[1], "server") == 0) {
         role = CONN_ROLE_SERVER;
-        if (argc != 6) {
+        if (argc != 4) {
             usage(argv[0]);
         }
     } else if (strcmp(argv[1], "client") == 0) {
@@ -78,10 +76,7 @@ int main(int argc, char **argv) {
     tun_ip = argv[2];
     server_port = atoi(argv[3]);
 
-    if (role == CONN_ROLE_SERVER) {
-        cert_file = argv[4];
-        key_file = argv[5];
-    } else {
+    if (role == CONN_ROLE_CLIENT) {
         server_ip = argv[4];
     }
 
@@ -94,10 +89,7 @@ int main(int argc, char **argv) {
     log_info("Starting edge %s", conn_role_str(role));
     log_info("TUN IP: %s", tun_ip);
     log_info("Server port: %d", server_port);
-    if (role == CONN_ROLE_SERVER) {
-        log_info("Certificate: %s", cert_file);
-        log_info("Private key: %s", key_file);
-    } else {
+    if (role == CONN_ROLE_CLIENT) {
          log_info("Server IP %s", server_ip);
     }
 
@@ -121,14 +113,6 @@ int main(int argc, char **argv) {
     connection_t *conn = create_connection(role,
                                            remote_host, remote_port,
                                            local_port);
-    if (!conn) {
-        return -1;
-    }
-
-    int ret = init_dtls_connection(conn, cert_file, key_file, NULL /*ca_cert*/);
-    if (!ret != 0) {
-        return -1;
-    }
 
     // Initialize io-uring
     iouring_ctx_t *uring_ctx = iouring_init(&iouring_params);
@@ -139,19 +123,11 @@ int main(int argc, char **argv) {
     }
 
     // Submit initial UDP receive operations
-    ret = iouring_initial_udp_recvs(uring_ctx, conn->udp_fd);
+    int ret = iouring_initial_udp_recvs(uring_ctx, conn->udp_fd);
     if (ret != 0) {
         return -1;
     };
     log_debug("Submitted initial UDP receive operation(s)");
-
-    log_info("Starting handshake ...");
-    ret = do_dtls_handshake(uring_ctx, conn);
-    if (ret) {
-        log_error("Handshake FAILURE");
-        return 1;
-    }
-    log_info("Handshake COMPLETED");
 
     // creating TUN device
     tun_device_t *tun = new_tun_device(tun_ifname, tun_ip, "255.255.255.0", 1400);
@@ -167,7 +143,7 @@ int main(int argc, char **argv) {
     }
     log_debug("Submitted initial TUN read operation(s)");
 
-    ret = tun_udp_run(uring_ctx, conn, tun->fd, &running);
+    ret = tun_udp_run_zero(uring_ctx, conn, tun->fd, &running);
     if (ret < 0) {
         log_error("ABORTED due to error");
     }
@@ -175,8 +151,6 @@ int main(int argc, char **argv) {
     // Cleanup
     log_info("Cleaning up...");
 
-    SSL_free(conn->ssl);
-    dtls_context_cleanup(conn->dtls_ctx);
     iouring_cleanup(uring_ctx);
     udp_socket_close(conn->udp_fd);
     tun_device_down(tun);
