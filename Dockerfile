@@ -1,4 +1,4 @@
-# Multi-stage build for DTLS VPN Server
+# Multi-stage build
 FROM ubuntu:24.04 AS builder
 
 # Install build dependencies
@@ -38,7 +38,7 @@ RUN apt-get update && apt-get install -y \
 RUN mkdir -p /app/certs
 
 # Copy binary from builder
-COPY --from=builder /build/build/edge_server /build/build/edge_client /app/
+COPY --from=builder /build/build/edge  /app/
 COPY --from=builder /build/build/dtls_forwarder /app/
 
 
@@ -54,6 +54,6 @@ WORKDIR /app
 # Note: Container must be run with --cap-add=NET_ADMIN --device=/dev/net/tun
 
 # Default command
-CMD ["./edge_server", "4433", "certs/server_cert.pem", "certs/server_key.pem", "10.9.0.254"]
+CMD ["./edge", "server", "10.9.0.254", "4433", "certs/server_cert.pem", "certs/server_key.pem"]
 
 # Made with Bob
