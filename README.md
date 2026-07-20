@@ -52,11 +52,11 @@ Three exacutables are created:
 
 On the server site:
 ```
-./wdge_zweo server <server_tun_ip> <server_udp_port>"
+./edge_zero server <server_tun_ip> <server_udp_port>"
 ```
 On the client site:
 ```
-./wdge_zweo client <client_tun_ip> <server_udp_port> <server_ip>"
+./edge_zero client <client_tun_ip> <server_udp_port> <server_ip>"
 ```
 
 A new route must also be created at both sites to make sure that packets with
