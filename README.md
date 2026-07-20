@@ -1,6 +1,6 @@
-# DTLS VPN Tunnel with io-uring
+# DTLS Tunnel with io-uring
 
-A high-performance VPN tunnel implementation using TUN devices for packet capture/injection, io-uring for asynchronous I/O, and OpenSSL DTLS for encryption. Creates a secure encrypted tunnel between client and server, routing IP packets through the secure channel.
+An IP tunnel implementation using TUN devices for packet capture/injection, io-uring for asynchronous I/O, and OpenSSL DTLS for encryption. Creates a secure encrypted tunnel between client and server, routing IP packets through the secure channel.
 
 ## Features
 
