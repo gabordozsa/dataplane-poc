@@ -14,16 +14,16 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
-#define RING_DEPTH 16
+#define RING_DEPTH 4
 
 // Note: we use multi-shot recvmsg
 static iouring_config_t iouring_params = {
-    .sq_depth           = RING_DEPTH,
-    .cq_depth           = 1024,
-    .br_n_bufs          = 2048,
-    .br_gid             = 1,
-    .n_io_ops           = 1024,
-    .n_initial_read_ops = RING_DEPTH - 1 // all slot but one (1 multidhot recv)
+    .sq_depth           = RING_DEPTH,   // submissiom queue depth
+    .cq_depth           = 1024,         // completion queue depth
+    .br_n_bufs          = 2048,         // number of provuded buffers in buffer ring
+    .br_gid             = 1,            // group ID of buffer ring
+    .n_io_ops           = 1024,         // number of user context structs for submisson requests
+    .n_initial_read_ops = 8.            // number of (single-shot) TUN reads submitted initially
 };
 
 static void print_config() {
