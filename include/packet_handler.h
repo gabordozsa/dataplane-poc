@@ -52,3 +52,8 @@ int tun_to_udp(connection_t *conn,
 int udp_to_tun(int tun_fd,
                io_op_t *op,
                iouring_ctx_t *uring_ctx);
+
+/**
+* Return a comppleted recv context, if there is any
+*/
+io_op_t *check_for_recv(iouring_ctx_t *uring_ctx, int *err);

@@ -4,6 +4,81 @@
 #include <errno.h>
 #include <assert.h>
 
+
+static
+int finalize_completion(iouring_ctx_t *uring_ctx, struct io_uring_cqe *cqe, io_op_t **op1) {
+    int ret = 0;
+    int cqe_res = cqe->res;
+    unsigned cqe_flags = cqe->flags;
+    bool recv_completed = false;
+    io_op_t *op = io_uring_cqe_get_data(cqe);
+    *op1 = op;
+    iouring_cqe_seen(uring_ctx, cqe);
+    if (cqe_res < 0) {
+        log_error("%s failed: %s (is_multi %d)", op_type_str(op->op_type), strerror(-cqe_res), op->is_multi);
+        return -1;
+    }
+    if (!op) {
+        log_error("CQE without io_op data");
+        return -1;
+    }
+    op->data_len = cqe_res;
+    if (op->data_len== 0) {
+        log_warn("%s 0 byte", op_type_str(op->op_type));
+    }
+    // Process based on operation type
+    switch (op->op_type) {
+        case OP_TYPE_UDP_RECV:
+            if (op->is_multi) {
+                ret = iouring_multishot_recvmsg_out(uring_ctx, op, cqe_flags);
+            } else {
+                log_debug("UDP received %d bytes, fd %d", op->data_len, op->fd);
+                ret = iouring_resubmit_recv(uring_ctx, op);
+            }
+            recv_completed = true;
+            break;
+        case OP_TYPE_UDP_SEND:
+            assert(!op->is_multi);
+            log_debug("UDP sent %d bytes, fd %d", op->data_len, op->fd);
+            io_op_free(uring_ctx, &op);
+            break;
+        case OP_TYPE_TUN_READ:
+            if (op->is_multi) {
+                assert(0); // NOT TESTED YET
+                ret = iouring_multishot_read_out(uring_ctx, op, cqe_flags);
+            } else {
+                log_debug("TUN read %d bytes", op->data_len);
+                ret = iouring_resubmit_recv(uring_ctx, op);
+                if (ret < 0) {
+                     log_error("ERROR finalize_completion() io_op_pool %p", uring_ctx->io_op_pool);
+                }
+            }
+            recv_completed = true;
+            break;
+        case OP_TYPE_TUN_WRITE:
+            assert(!op->is_multi);
+            log_debug("TUN wrote %d bytes", op->data_len);
+            io_op_free(uring_ctx, &op);
+            break;
+        default:
+            log_error("Unknown operation type: %d", op->op_type);
+            ret = -1;
+            break;
+    }
+
+    if (ret < 0) {
+        io_op_free(uring_ctx, &op);
+        return -1;
+    }
+
+    if (recv_completed)
+        ret = 0;
+    else
+        ret = 1;
+
+    return ret;
+}
+
 io_op_t *wait_for_recv(iouring_ctx_t *uring_ctx) {
     int ret = 0;
     io_op_t *op = NULL;
@@ -20,64 +95,12 @@ io_op_t *wait_for_recv(iouring_ctx_t *uring_ctx) {
             log_error("io_uring_wait_cqe failed");
             return NULL;
         }
-        op = (io_op_t *)io_uring_cqe_get_data(cqe);
-        int cqe_res = cqe->res;
-        unsigned cqe_flags = cqe->flags;
-        iouring_cqe_seen(uring_ctx, cqe);
-         if (cqe_res < 0) {
-            log_error("%s failed: %s (is_multi %d)", op_type_str(op->op_type), strerror(-cqe_res), op->is_multi);
+        ret = finalize_completion(uring_ctx, cqe, &op);
+        if (ret == -1) {
             return NULL;
+        } else if (ret == 0) {
+            done = true;
         }
-        if (!op) {
-            log_error("CQE without io_op data");
-            return NULL;
-        }
-        op->data_len = cqe_res;
-        if (op->data_len== 0) {
-            log_warn("%s 0 byte", op_type_str(op->op_type));
-        }
-        // Process based on operation type
-        switch (op->op_type) {
-            case OP_TYPE_UDP_RECV:
-                if (op->is_multi) {
-                    ret = iouring_multishot_recvmsg_out(uring_ctx, op, cqe_flags);
-                } else {
-                    log_debug("UDP received %d bytes, fd %d", op->data_len, op->fd);
-                    ret = iouring_resubmit_recv(uring_ctx, op);
-                }
-                done = true;
-                break;
-            case OP_TYPE_UDP_SEND:
-                assert(!op->is_multi);
-                log_debug("UDP sent %d bytes, fd %d", op->data_len, op->fd);
-                io_op_free(uring_ctx, &op);
-                break;
-            case OP_TYPE_TUN_READ:
-                if (op->is_multi) {
-                    assert(0); // NOT TESTED YET
-                    ret = iouring_multishot_read_out(uring_ctx, op, cqe_flags);
-                } else {
-                    log_debug("TUN read %d bytes", op->data_len);
-                    ret = iouring_resubmit_recv(uring_ctx, op);
-                }
-                 done = true;
-                 break;
-            case OP_TYPE_TUN_WRITE:
-                assert(!op->is_multi);
-                log_debug("TUN wrote %d bytes", op->data_len);
-                io_op_free(uring_ctx, &op);
-                break;
-            default:
-                log_error("Unknown operation type: %d", op->op_type);
-                ret = -1;
-                done = true;
-                break;
-        }
-    }
-
-    if (ret < 0) {
-         io_op_free(uring_ctx, &op);
-         return NULL;
     }
     return op;
 }
@@ -184,3 +207,34 @@ int udp_to_tun(int tun_fd,
     }
     return 0;
 }
+
+io_op_t *check_for_recv(iouring_ctx_t *uring_ctx, int *err) {
+    int ret = 0;
+    io_op_t *op = NULL;
+    bool done = false;
+    *err = 0; 
+    //log_debug("Entering wait_for_recv2 ...");
+    while (!done) {
+        struct io_uring_cqe *cqe;
+        ret = iouring_peek_cqe(uring_ctx, &cqe);
+        if (ret < 0) {
+            if (ret == -EAGAIN) {
+                *err = 0;
+            } else {
+                *err = ret;
+            }
+            return NULL;
+        }
+        ret = finalize_completion(uring_ctx, cqe, &op);
+        if (ret == -1) {
+            log_error("ERROR check_for_recv() io_op_pool %p", uring_ctx->io_op_pool);
+            *err = -1;
+            return NULL;
+        } else if (ret == 0) {
+            done = true;
+        }
+    }
+    return op;
+}
+
+

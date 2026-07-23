@@ -65,6 +65,7 @@ struct io_op_t {
     bool is_multi;
     uint8_t *buffer;
     int data_len;
+    struct iouring_ctx_t *buf_ctx; // buffer owner context (buffer can get transferred among io_ops)
     int buf_idx; // if buffer is from multishot buffer ring
     buf_addr_t *buf_addr; // if buffer is from single-shot pool
     struct msghdr msg;
@@ -88,10 +89,11 @@ typedef struct {
     const int n_io_ops;  // size of io_op  pool
     const int n_initial_recv_ops; // number of initial single-shot recvs submitted
     const int n_initial_read_ops; // number of initial single-shot reads submitted
+    const char *name;   // name to corellate log messages
 } iouring_config_t;
 
 // io-uring context
-typedef struct {
+struct iouring_ctx_t {
     iouring_config_t *config; // config params
     struct io_uring ring;
     io_op_t *io_op_pool;
@@ -99,7 +101,8 @@ typedef struct {
     uint8_t *br_bufs;
     struct io_uring_buf_ring *br;
     io_stats_t stats;
-} iouring_ctx_t;
+};
+typedef struct iouring_ctx_t iouring_ctx_t;
 
 /**
  * Initialize io-uring context

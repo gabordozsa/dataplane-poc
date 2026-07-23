@@ -14,25 +14,37 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
-#define RING_DEPTH 4
 
 // Note: we use multi-shot recvmsg
-static iouring_config_t iouring_params = {
-    .sq_depth           = RING_DEPTH,   // submissiom queue depth
-    .cq_depth           = 1024,         // completion queue depth
-    .br_n_bufs          = 2048,         // number of provuded buffers in buffer ring
-    .br_gid             = 1,            // group ID of buffer ring
-    .n_io_ops           = 1024,         // number of user context structs for submisson requests
-    .n_initial_read_ops = 8.            // number of (single-shot) TUN reads submitted initially
+static iouring_config_t tun_iouring_params = {
+    .sq_depth           = 4,      // submissiom queue depth
+    .cq_depth           = 512,   // completion queue depth
+    .n_io_ops           = 2048 + 16,   // number of user context structs for submisson requests
+    .n_initial_read_ops = 8,      // number of (single-shot) TUN reads submitted initially
+    .name               = "TUN"
+};
+
+static iouring_config_t udp_iouring_params = {
+    .sq_depth           = 4,      // submissiom queue depth
+    .cq_depth           = 1024,   // completion queue depth
+    .br_n_bufs          = 2048,   // number of provuded buffers in buffer ring
+    .br_gid             = 1,      // group ID of buffer ring
+    .n_io_ops           = 512,   // number of user context structs for submisson requests
+    .name               = "UDP"
 };
 
 static void print_config() {
-    log_info("SQ depth %d CQ depth %d n_io_ops %d br_n_bufs %d",
-             iouring_params.sq_depth,
-             iouring_params.cq_depth,
-             iouring_params.n_io_ops,
-             iouring_params.br_n_bufs,
-             iouring_params.n_initial_read_ops);
+    log_info("UDP uring SQ depth %d CQ depth %d n_io_ops %d br_n_bufs %d",
+             udp_iouring_params.sq_depth,
+             udp_iouring_params.cq_depth,
+             udp_iouring_params.n_io_ops,
+             udp_iouring_params.br_n_bufs);
+    log_info("TUN uring SQ depth %d CQ depth %d n_io_ops %d br_n_bufs %d",
+             tun_iouring_params.sq_depth,
+             tun_iouring_params.cq_depth,
+             tun_iouring_params.n_io_ops,
+             tun_iouring_params.br_n_bufs,
+             tun_iouring_params.n_initial_read_ops);
 }
 
 static volatile int running = 1;
@@ -115,15 +127,15 @@ int main(int argc, char **argv) {
                                            local_port);
 
     // Initialize io-uring
-    iouring_ctx_t *uring_ctx = iouring_init(&iouring_params);
-    if (!uring_ctx) {
-        log_error("Failed to initialize io-uring");
+    iouring_ctx_t *udp_uring_ctx = iouring_init(&udp_iouring_params);
+    if (!udp_uring_ctx) {
+        log_error("Failed to initialize io-uring for UDP");
         udp_socket_close(conn->udp_fd);
         return 1;
     }
 
     // Submit initial UDP receive operations
-    int ret = iouring_initial_udp_recvs(uring_ctx, conn->udp_fd);
+    int ret = iouring_initial_udp_recvs(udp_uring_ctx, conn->udp_fd);
     if (ret != 0) {
         return -1;
     };
@@ -136,14 +148,24 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    // Initialize io-uring
+    iouring_ctx_t *tun_uring_ctx = iouring_init(&tun_iouring_params);
+    if (!tun_uring_ctx) {
+        log_error("Failed to initialize io-uring for TUN");
+        tun_device_down(tun);
+        tun_device_destroy(tun);
+        udp_socket_close(conn->udp_fd);
+        return 1;
+    }
+
     // Submit initial TUN read operations
-    ret = iouring_initial_tun_reads(uring_ctx, tun->fd);
+    ret = iouring_initial_tun_reads(tun_uring_ctx, tun->fd);
     if (ret != 0) {
         return ret;
     }
     log_debug("Submitted initial TUN read operation(s)");
 
-    ret = tun_udp_run_zero(uring_ctx, conn, tun->fd, &running);
+    ret = tun_udp_run_zero(udp_uring_ctx, conn, tun_uring_ctx, tun->fd, &running);
     if (ret < 0) {
         log_error("ABORTED due to error");
     }
@@ -151,7 +173,8 @@ int main(int argc, char **argv) {
     // Cleanup
     log_info("Cleaning up...");
 
-    iouring_cleanup(uring_ctx);
+    iouring_cleanup(udp_uring_ctx);
+    iouring_cleanup(tun_uring_ctx);
     udp_socket_close(conn->udp_fd);
     tun_device_down(tun);
     tun_device_destroy(tun);

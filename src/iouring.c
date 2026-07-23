@@ -82,19 +82,21 @@ static void iouring_free_io_op_pool(iouring_ctx_t *ctx) {
 static io_op_t *iouring_get_io_op(iouring_ctx_t *ctx) {
     io_op_t *op = ctx->io_op_pool;
     if (!op) {
-        log_error("Failed to get I/O operation from pool");
+        log_error("Failed to get I/O operation from pool (%s)", ctx->config->name);
         return NULL;
     }
     ctx->io_op_pool = op->next;
     memset(op, 0, sizeof(io_op_t));
     op->buf_idx = -1;
 
+    log_debug("GET io_op %p (%s)", op, ctx->config->name); 
     return op;
 }
 
 static void iouring_put_io_op(iouring_ctx_t *ctx,io_op_t *op) {
     op->next = ctx->io_op_pool;
     ctx->io_op_pool = op;
+    log_debug("PUT io_op %p (%s)", op, ctx->config->name);
 }
 
 static int iouring_alloc_buf_addr_pool(iouring_ctx_t *ctx, int n_bufs) {
@@ -102,7 +104,7 @@ static int iouring_alloc_buf_addr_pool(iouring_ctx_t *ctx, int n_bufs) {
     for (int i = 0; i < n_bufs; i++) {
         buf_addr_t *buf_addr = calloc(1, sizeof(buf_addr_t));
         if (!buf_addr) {
-            log_error("Failed to allocate I/O buffer and address pool");
+            log_error("Failed to allocate I/O buffer and address pool (%s)", ctx->config->name);
             return -1;
         }
         if (prev) {
@@ -128,7 +130,7 @@ static void iouring_free_buf_addr_pool(iouring_ctx_t *ctx) {
 static buf_addr_t *iouring_get_buf_addr(iouring_ctx_t *ctx) {
     buf_addr_t *buf_addr = ctx->buf_addr_pool;
     if (!buf_addr) {
-        log_error("Failed to get I/O buffer and address");
+        log_error("Failed to get I/O buffer and address (%s)", ctx->config->name);
         return NULL;
     }
     ctx->buf_addr_pool = buf_addr->next;
@@ -200,7 +202,8 @@ static int iouring_alloc_buffers(iouring_ctx_t *ctx) {
         return -1;
      }
 
-    if (USE_MULTI_RECV || USE_MULTI_READ) {
+    if (ctx->config->br_n_bufs > 0) {
+        assert(USE_MULTI_RECV || USE_MULTI_READ);
         // buffer ring for multishot
         ret = iouring_alloc_multishot_buffers(ctx);
         if (ret != 0) {
@@ -240,22 +243,21 @@ iouring_ctx_t* iouring_init(iouring_config_t *c) {
         return NULL;
     }
 
-    log_info("Initialized io-uring with sq depth %u, cq depth %u, cqe_no_drop %d",
-              c->sq_depth, c->cq_depth, cqe_no_drop);
+    log_info("Initialized io-uring with sq depth %u, cq depth %u, cqe_no_drop %d (%s)",
+              c->sq_depth, c->cq_depth, cqe_no_drop, c->name);
 
     return ctx;
 }
 
-static void iouring_recycle_buffer(iouring_ctx_t *ctx, io_op_t *op) {
-    assert(op && !op->buf_addr && op->buf_idx >= 0);
+static void iouring_recycle_buffer(iouring_ctx_t *ctx, int buf_idx) {
+    assert(buf_idx >= 0);
     io_uring_buf_ring_add(ctx->br,
-                          ctx->br_bufs +  op->buf_idx * BUF_SIZE,
+                          ctx->br_bufs +  buf_idx * BUF_SIZE,
                           BUF_SIZE,
-                          op->buf_idx,
+                          buf_idx,
                           io_uring_buf_ring_mask(ctx->config->br_n_bufs), 0);
     io_uring_buf_ring_advance(ctx->br, 1);
-    log_debug("Recycled br buffer %p idx %d",op->buffer, op->buf_idx);
-    op->buf_idx = -1;
+    log_debug("Recycled br buffer idx %d (%s)", buf_idx, ctx->config->name);
 }
 
 static int iouring_submit_multishot_recvmsg_op(iouring_ctx_t *ctx, io_op_t *op) {
@@ -297,6 +299,7 @@ int iouring_multishot_recvmsg_out(iouring_ctx_t *ctx, io_op_t *op, unsigned cqe_
     }
 
     op->buf_idx = cqe_flags >> IORING_CQE_BUFFER_SHIFT;
+    op->buf_ctx = ctx;
     uint8_t *buf = ctx->br_bufs + op->buf_idx * BUF_SIZE;
     struct io_uring_recvmsg_out *mout = io_uring_recvmsg_validate(buf, op->data_len /*cqe->res*/, &op->msg);
     if (!mout) {
@@ -638,7 +641,8 @@ void iouring_cqe_seen(iouring_ctx_t *ctx, struct io_uring_cqe *cqe) {
 
 void iouring_cleanup(iouring_ctx_t *ctx) {
     if (ctx) {
-        log_info("Cleaning up io-uring (multishot_recv rearmed: %d)", ctx->stats.multi_recv_rearmed);
+        log_info("Cleaning up %s io-uring (multishot_recv rearmed: %d)", 
+                  ctx->config->name, ctx->stats.multi_recv_rearmed);
         iouring_free_buffers(ctx);
         io_uring_queue_exit(&ctx->ring);
         free(ctx);
@@ -668,9 +672,11 @@ io_op_t* io_op_alloc_buf(iouring_ctx_t *ctx, int op_type, int fd, bool is_multi,
                 return NULL;
             }
             op->buf_addr = buf_addr;
+            op->buf_ctx = ctx;
             op->buffer = buf_addr->buf;
             op->addr = &buf_addr->addr;
         } else {
+            op->buf_ctx =  buf_owner->buf_ctx;
             if (!buf_owner->is_multi) {
                 buf_addr_t * buf_addr = buf_owner->buf_addr;
                 op->data_len = buf_owner->data_len;
@@ -695,7 +701,9 @@ void io_op_free(iouring_ctx_t *ctx, io_op_t **op) {
         if ((*op)->is_multi) {
             if ((*op)->buf_idx >= 0) {
                 // only recycle buffer, multishot op is still in use
-                iouring_recycle_buffer(ctx, *op);
+                assert(ctx == (*op)->buf_ctx);
+                iouring_recycle_buffer(ctx, (*op)->buf_idx);
+                (*op)->buf_idx = -1;
             } else if ((*op)->buf_idx != DO_NOT_FREE) {
                 log_debug("Freeing multishot op");
                 iouring_put_io_op(ctx, *op);
@@ -706,10 +714,10 @@ void io_op_free(iouring_ctx_t *ctx, io_op_t **op) {
         } else {
             assert(!(*op)->buf_addr || (*op)->buf_idx == -1);
             if ((*op)->buf_addr) {
-                iouring_put_buf_addr(ctx, (*op)->buf_addr);
+                iouring_put_buf_addr((*op)->buf_ctx, (*op)->buf_addr);
             } else if ( (*op)->buf_idx >= 0) {
-                // an io_uring.manged br buffer got transfered to a send op
-                iouring_recycle_buffer(ctx, *op);
+                // a provided br buffer got transfered to a send op
+                iouring_recycle_buffer((*op)->buf_ctx, (*op)->buf_idx);
             }
             iouring_put_io_op(ctx, *op);
             *op = NULL;
@@ -721,6 +729,7 @@ int iouring_resubmit_recv(iouring_ctx_t *uring_ctx, io_op_t *completed) {
     int ret = 0;
     io_op_t * new_op = io_op_alloc(uring_ctx, completed->op_type, completed->fd, false /*is_multi*/);
     if (!new_op) {
+        log_error("ERROR iouring_resubmit_recv() io_op_pool %p", uring_ctx->io_op_pool);
         ret = -1;
     } else {
         switch(completed->op_type) {
