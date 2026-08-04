@@ -1,6 +1,8 @@
 #ifndef IOURING_H
 #define IOURING_H
 
+#includ  "spsc_ring.h"
+
 #include <liburing.h>
 #include <stdint.h>
 #include <sys/socket.h>
@@ -46,13 +48,10 @@ void io_uring_prep_read_multishot(struct io_uring_sqe *sqe,
 // Also, we can have larger UDP payloads during the DTLS handshake.
 #define BUF_SIZE      1600
 
-// Special buf_idx value to avoid freeing an active multi io_op if
-// its buffer got transfered to a send op
-#define DO_NOT_FREE -2
-
 // buffer pool items (for single-shot ops)
 struct buf_addr_t {
     uint8_t buf[BUF_SIZE];
+    int data_len;
     struct sockaddr_storage addr;
     struct buf_addr_t *next; // next io_buf_t in the free pool
 };
@@ -65,7 +64,6 @@ struct io_op_t {
     bool is_multi;
     uint8_t *buffer;
     int data_len;
-    struct iouring_ctx_t *buf_ctx; // buffer owner context (buffer can get transferred among io_ops)
     int buf_idx; // if buffer is from multishot buffer ring
     buf_addr_t *buf_addr; // if buffer is from single-shot pool
     struct msghdr msg;
@@ -89,6 +87,7 @@ typedef struct {
     const int n_io_ops;  // size of io_op  pool
     const int n_initial_recv_ops; // number of initial single-shot recvs submitted
     const int n_initial_read_ops; // number of initial single-shot reads submitted
+    const int tr_depth; // transfer ring depth (to transfer data to the other thread)
     const char *name;   // name to corellate log messages
 } iouring_config_t;
 
@@ -100,6 +99,7 @@ struct iouring_ctx_t {
     buf_addr_t *buf_addr_pool;
     uint8_t *br_bufs;
     struct io_uring_buf_ring *br;
+    spsc_ring_t *transfer; // to transfer data to the other thread
     io_stats_t stats;
 };
 typedef struct iouring_ctx_t iouring_ctx_t;
@@ -224,7 +224,7 @@ io_op_t* io_op_alloc(iouring_ctx_t *ctx, int op_type, int fd, bool is_multi);
 /**
  *  Allocate I/O operation context with the provided data-addr buffer item
  */
-io_op_t* io_op_alloc_buf(iouring_ctx_t *ctx, int op_type, int fd, bool is_multi, io_op_t *buf_owner);
+io_op_t* io_op_alloc_buf(iouring_ctx_t *ctx, int op_type, int fd, bool is_multi, buf_addr *buf_addr);
 
 /**
  * Free I/O operation context

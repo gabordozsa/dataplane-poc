@@ -43,14 +43,14 @@ int send_udp(iouring_ctx_t *uring_ctx, connection_t *conn,
  * Forward IP packet from TUN to UDP socket
  */
 int tun_to_udp(connection_t *conn,
-               io_op_t *op,
+               buf_addr_t *buf_addr,
                iouring_ctx_t *uring_ctx);
 
 /**
  * Forward IP packet from UDP socket to TUN
  */
 int udp_to_tun(int tun_fd,
-               io_op_t *op,
+               buf_addr_t *buf_addr,
                iouring_ctx_t *uring_ctx);
 
 /**

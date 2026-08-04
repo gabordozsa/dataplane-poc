@@ -13,23 +13,27 @@
 #include <unistd.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <pthread.h>
 
 
-// Note: we use multi-shot recvmsg
+// TUN uring config params
 static iouring_config_t tun_iouring_params = {
     .sq_depth           = 4,      // submissiom queue depth
     .cq_depth           = 512,   // completion queue depth
     .n_io_ops           = 2048 + 16,   // number of user context structs for submisson requests
     .n_initial_read_ops = 8,      // number of (single-shot) TUN reads submitted initially
+    .tr_depth           = 512,
     .name               = "TUN"
 };
 
+// UDP uring config params
 static iouring_config_t udp_iouring_params = {
     .sq_depth           = 4,      // submissiom queue depth
     .cq_depth           = 1024,   // completion queue depth
     .br_n_bufs          = 2048,   // number of provuded buffers in buffer ring
     .br_gid             = 1,      // group ID of buffer ring
     .n_io_ops           = 512,   // number of user context structs for submisson requests
+    .tr_depth.          = 512, 
     .name               = "UDP"
 };
 
@@ -59,6 +63,33 @@ void usage(const char *cmd) {
     fprintf(stderr, "Usage: %s client <tun_ip> <server_port>  <server_ip>\n", cmd);
     fprintf(stderr, "Usage: %s server <tun_ip> <server_port>\n", cmd);
     exit(1);
+}
+
+// multi threading
+typedef struct {
+    const iouring_ctx_t *tun_uring_ctx;
+    const iouring_ctx_t *udp_uring_ctx;
+    const connection_t *conn;
+    const int tun_fd;
+    volatile int *running;
+} thread_args;
+
+void *tun_thread_func(void *a) {
+    thread_args *args = (thread_args *)a;
+    iouring_ctx_t *tun_uring_ctx = args->tun_uring_ctx;
+    spsc_ring_t *transfer_from_udp = args->udp_uring_ctx->transfer;
+    int tun_fd = args->tun_fd;
+    int ret =  run_zero_tun2udp(tun_uring_ctx, tun_fd, transfer_from_udp, args->running);
+    return (void *)ret;
+}
+
+void *udp_thread_func(void *a) {
+    thread_args *args = (thread_args *)a;
+    iouring_ctx_t *udp_uring_ctx = args->udp_uring_ctx;
+    spsc_ring_t *transfer_from_udp = args->tun_uring_ctx->transfer;
+    connection_t *conn = args->conn;
+    int ret =  run_zero_udp2tun(udp_uring_ctx, conn, transfer_from_tun, args->running);
+    return (void *)ret;
 }
 
 int main(int argc, char **argv) {
@@ -126,7 +157,7 @@ int main(int argc, char **argv) {
                                            remote_host, remote_port,
                                            local_port);
 
-    // Initialize io-uring
+    // Initialize io-uring for UDP
     iouring_ctx_t *udp_uring_ctx = iouring_init(&udp_iouring_params);
     if (!udp_uring_ctx) {
         log_error("Failed to initialize io-uring for UDP");
@@ -148,7 +179,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // Initialize io-uring
+    // Initialize io-uring for TUN
     iouring_ctx_t *tun_uring_ctx = iouring_init(&tun_iouring_params);
     if (!tun_uring_ctx) {
         log_error("Failed to initialize io-uring for TUN");
@@ -165,9 +196,49 @@ int main(int argc, char **argv) {
     }
     log_debug("Submitted initial TUN read operation(s)");
 
-    ret = tun_udp_run_zero(udp_uring_ctx, conn, tun_uring_ctx, tun->fd, &running);
-    if (ret < 0) {
-        log_error("ABORTED due to error");
+    thtread_args th_args = {
+        .tun_uring_ctx = tun_uring_ctx,
+        .udp_uring_ctx = udp_uring_ctx,
+        .conn          = conn,
+        .tun_fd        = tun_fd,
+        .running       = &running
+    };
+
+    // start TUN thread
+    pthread_t tun_thread;
+    ret = pthread_create(&tun_thread, NULL, tun_thread_func, &th_args);
+    if (ret != 0) {
+        log_error("Failed to crreate TUN thread: %s", strerror(ret));
+        return -1;
+    }
+
+    // start UDP thread
+    pthread_t udp_thread;
+    ret = pthread_create(&tun_thread, NULL, udp_thread_func, &th_args);
+    if (ret != 0) {
+        log_error("Failed to crreate UDP thread: %s", strerror(ret));
+        return -1;
+    }
+
+    // Join the threads before clean up
+    // main loop
+    void *retval;
+    ret = pthread_join(tun_thread, &retval);
+    if (ret != 0) {
+        log_error("TUN thread join failed: %s", strerror(ret));
+        return -1;
+    }
+    if (retval != NULL) {
+        log_error("TUN thread exited with error")
+    }
+
+    pthread_join(udp_thread, &retval);
+    if (ret != 0) {
+        log_error("UDP thread join failed: %s", strerror(ret));
+        return -1;
+    }
+    if (retval != NULL) {
+        log_error("UDP thread exited with error")
     }
 
     // Cleanup

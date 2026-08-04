@@ -167,35 +167,35 @@ int dtls_decrypt_and_write_tun(connection_t *conn,
 
 
 int tun_to_udp(connection_t *conn,
-               io_op_t *op,
-               iouring_ctx_t *uring_ctx) {
+               buf_addr_t *buf_addr,
+               iouring_ctx_t *udp_uring_ctx) {
     if (at_log_level(LOG_DEBUG)) {
-        print_ip_packet_info(op->buffer, op->data_len, "TUN -> UDP");
+        print_ip_packet_info(buf_addr->buf, buf_addr->data_len, "TUN -> UDP");
     }
 
-    io_op_t *send_op = io_op_alloc_buf(uring_ctx, OP_TYPE_UDP_SEND, conn->udp_fd, false /*is_multi*/, op /*buf_owner*/);
+    io_op_t *send_op = io_op_alloc_buf(udp_uring_ctx, OP_TYPE_UDP_SEND, conn->udp_fd, false /*is_multi*/, buf_addr);
     if (!send_op) {
         return -1;
     }
 
-    int ret = iouring_submit_udp_send(uring_ctx, send_op,
+    int ret = iouring_submit_udp_send(udp_uring_ctx, send_op,
                                       (struct sockaddr *)&conn->addr, conn->addr_len,
                                       NULL /*data is already in place*/, send_op->data_len);
     if (ret < 0) {
-        io_op_free(uring_ctx, &send_op);
+        io_op_free(udp_uring_ctx, &send_op);
         return -1;
     }
     return 0;
 }
 
 int udp_to_tun(int tun_fd,
-               io_op_t *op,
+               buf_addr_t *buf_addr,
                iouring_ctx_t *uring_ctx) {
     if (at_log_level(LOG_DEBUG)) {
-        print_ip_packet_info(op->buffer, op->data_len, "UDP -> TUN");
+        print_ip_packet_info(buf_addr->buf, buf_addr->data_len, "UDP -> TUN");
     }
 
-    io_op_t *send_op = io_op_alloc_buf(uring_ctx, OP_TYPE_TUN_WRITE, tun_fd, false /*is_multi*/, op /*buf_owner*/);
+    io_op_t *send_op = io_op_alloc_buf(uring_ctx, OP_TYPE_TUN_WRITE, tun_fd, false /*is_multi*/, buf_addr);
     if (!send_op) {
         return -1;
     }
@@ -204,6 +204,64 @@ int udp_to_tun(int tun_fd,
     if (ret < 0) {
         io_op_free(uring_ctx, &send_op);
         return -1;
+    }
+    return 0;
+}
+
+int tun_to_transfer(io_op_t *op, iouring_ctx_t *tun_uring_ctx) {
+    if (at_log_level(LOG_DEBUG)) {
+        print_ip_packet_info(op->buffer, op->data_len, "TUN -> transfer");
+    }
+    assert(!op->is_multi);
+    // push the buffer with data into to the transfer ring, for the
+    // udp thread to process
+    op->buf_addr->data_len = op->data_len;
+    bool ok = spsc_ring_push(tun_uring_ctx->transfer, op->buf_addr);
+    if (!ok) {
+        log_error("TUN transfer ring is full");
+        return -1;
+    }
+    op->buf_addr = NULL;
+}
+
+int transfer_to_udp(spsc_ring_t *transfer_ring, connection_t *conn, iouring_ctx_t *udp_uring_ctx) {
+    buf_addr_t *buf_addr = NULL;
+    bool ok = spsc_ring_pop(transfer_ring, &buf_addr);
+    if (ok) {
+        int ret = tun_to_udp(conn, buf_addr, udp_uring_ctx);
+        if (ret != 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+int udp_to_transfer(io_op_t *op, iouring_ctx_t *udp_uring_ctx) {
+     if (at_log_level(LOG_DEBUG)) {
+        print_ip_packet_info(op->buffer, op->data_len, "UDP -> transfer");
+    }
+    assert(op->is_multi);
+    buf_addr_t *buf_addr = iouring_get_buf_addr(udp_uring_ctx);
+    if (!buf_addr) {
+        return -1;
+    }
+    memcpy(buf_addr->buf, op->buffer, op->data_len);
+    buf_addr->data_len = op->data_len;
+    bool ok = spsc_ring_push(udp_uring_ctx->transfer, buf_addr);
+    if (!ok) {
+        log_error("UDP transfer ring is full");
+        return -1;
+    }
+}
+
+int transfer_to_tun(spsc_ring_t *transfer_ring, int tun_fd, iouring_ctx_t *tun_uring_ctx) {
+    buf_addr_t *buf_addr = NULL;
+    bool ok = spsc_ring_pop(transfer_ring, &buf_addr);
+    if (ok) {
+        int ret = udp_to_tun(tun_fd, buf_addr, tun_uring_ctx);
+        if (ret != 0) {
+            return -1;
+        }
     }
     return 0;
 }

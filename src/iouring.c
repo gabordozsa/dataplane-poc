@@ -243,8 +243,13 @@ iouring_ctx_t* iouring_init(iouring_config_t *c) {
         return NULL;
     }
 
-    log_info("Initialized io-uring with sq depth %u, cq depth %u, cqe_no_drop %d (%s)",
-              c->sq_depth, c->cq_depth, cqe_no_drop, c->name);
+    ctx->transfer = spsc_ring_create(c->tr_depth);
+    if (!ctx) {
+        return NULL;
+    }
+
+    log_info("Initialized io-uring with sq depth %u, cq depth %u, cqe_no_drop %d  tr_depth %d (%s)",
+              c->sq_depth, c->cq_depth, cqe_no_drop, c->tr_depth, c->name);
 
     return ctx;
 }
@@ -653,18 +658,18 @@ io_op_t* io_op_alloc(iouring_ctx_t *ctx, int op_type, int fd, bool is_multi) {
     return io_op_alloc_buf(ctx, op_type, fd, is_multi, NULL /*buf_owner*/);
 }
 
-io_op_t* io_op_alloc_buf(iouring_ctx_t *ctx, int op_type, int fd, bool is_multi, io_op_t *buf_owner) {
+io_op_t* io_op_alloc_buf(iouring_ctx_t *ctx, int op_type, int fd, bool is_multi, buf_addr_t *buf_addr) {
     io_op_t *op = iouring_get_io_op(ctx);
     if (!op) {
         return NULL;
     }
-
+    assert(!is_multi || !buf_addr);
     op->is_multi = is_multi;
     op->op_type = op_type;
     op->fd = fd;
 
     if (!is_multi) {
-        if(!buf_owner) {
+        if(!buf_addr) {
             buf_addr_t *buf_addr = iouring_get_buf_addr(ctx);
             if (!buf_addr) {
                 log_error("Failed to allocate I/O buffer and address");
@@ -672,24 +677,13 @@ io_op_t* io_op_alloc_buf(iouring_ctx_t *ctx, int op_type, int fd, bool is_multi,
                 return NULL;
             }
             op->buf_addr = buf_addr;
-            op->buf_ctx = ctx;
             op->buffer = buf_addr->buf;
             op->addr = &buf_addr->addr;
         } else {
-            op->buf_ctx =  buf_owner->buf_ctx;
-            if (!buf_owner->is_multi) {
-                buf_addr_t * buf_addr = buf_owner->buf_addr;
-                op->data_len = buf_owner->data_len;
+                op->data_len = buf_addr->data_len;
                 op->buf_addr = buf_addr;
                 op->buffer = buf_addr->buf;
                 op->addr = &buf_addr->addr;
-                buf_owner->buf_addr = NULL;
-            } else {
-                // data is in an io_uring managed br buffer
-                op->buf_idx = buf_owner->buf_idx;
-                op->buffer = buf_owner->buffer;
-                op->data_len = buf_owner->data_len;
-                buf_owner->buf_idx = DO_NOT_FREE;
             }
         }
     }
@@ -701,10 +695,9 @@ void io_op_free(iouring_ctx_t *ctx, io_op_t **op) {
         if ((*op)->is_multi) {
             if ((*op)->buf_idx >= 0) {
                 // only recycle buffer, multishot op is still in use
-                assert(ctx == (*op)->buf_ctx);
                 iouring_recycle_buffer(ctx, (*op)->buf_idx);
                 (*op)->buf_idx = -1;
-            } else if ((*op)->buf_idx != DO_NOT_FREE) {
+            } else {
                 log_debug("Freeing multishot op");
                 iouring_put_io_op(ctx, *op);
                 *op = NULL;
@@ -714,10 +707,10 @@ void io_op_free(iouring_ctx_t *ctx, io_op_t **op) {
         } else {
             assert(!(*op)->buf_addr || (*op)->buf_idx == -1);
             if ((*op)->buf_addr) {
-                iouring_put_buf_addr((*op)->buf_ctx, (*op)->buf_addr);
+                iouring_put_buf_addr(ctx, (*op)->buf_addr);
             } else if ( (*op)->buf_idx >= 0) {
                 // a provided br buffer got transfered to a send op
-                iouring_recycle_buffer((*op)->buf_ctx, (*op)->buf_idx);
+                iouring_recycle_buffer((ctx, (*op)->buf_idx);
             }
             iouring_put_io_op(ctx, *op);
             *op = NULL;
