@@ -63,7 +63,7 @@ int tun_udp_run_zero(iouring_ctx_t *udp_uring_ctx, connection_t *conn, iouring_c
                 log_debug("Connection address is set to %s (len %d fd %d)",
                             addr_to_string((struct sockaddr *)&conn->addr), conn->addr_len, conn->udp_fd);
             }
-            ret = udp_to_tun(tun_fd, op, tun_uring_ctx);
+            ret = udp_to_tun(tun_fd, op->buf_addr, tun_uring_ctx);
             if (ret < 0) {
                 log_error("ERROR udp_to_tun()  op->buf_idx %d io_op_pool %p", op->buf_idx, tun_uring_ctx->io_op_pool);
                 break;
@@ -120,7 +120,7 @@ int run_zero_tun2udp(iouring_ctx_t *tun_uring_ctx, int tun_fd, spsc_ring_t *tran
     return ret;
 }
 
-run_zero_udp2tun(iouring_ctx_t *udp_uring_ctx, connection_t *conn, spsc_ring_t *transfer_from_tun, volatile int *running) {
+int run_zero_udp2tun(iouring_ctx_t *udp_uring_ctx, connection_t *conn, spsc_ring_t *transfer_from_tun, volatile int *running) {
     int ret = 0;
 
     log_info("Starting udp2tun loop");
@@ -132,7 +132,7 @@ run_zero_udp2tun(iouring_ctx_t *udp_uring_ctx, connection_t *conn, spsc_ring_t *
          // check for a cumpleted TUN read
         op = check_for_recv(udp_uring_ctx, &err);
         if (err != 0) {
-            log_error("ERROR  check_for_recv() io_op_pool %p (tun2udp)", tun_uring_ctx->io_op_pool);
+            log_error("ERROR  check_for_recv() io_op_pool %p (tun2udp)", udp_uring_ctx->io_op_pool);
             return -1;
         }
         if (op) {
@@ -143,7 +143,7 @@ run_zero_udp2tun(iouring_ctx_t *udp_uring_ctx, connection_t *conn, spsc_ring_t *
              io_op_free(udp_uring_ctx, &op);
         }
         // check TUN transfer ring for UDP sends
-        ret = transfer_to_udp(tr_from_tun, conn, udp_uring_ctx);
+        ret = transfer_to_udp(transfer_from_tun, conn, udp_uring_ctx);
         if (ret != 0) {
             return -1;
         }

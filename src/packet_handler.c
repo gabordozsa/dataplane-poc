@@ -200,7 +200,7 @@ int udp_to_tun(int tun_fd,
         return -1;
     }
 
-    int ret = iouring_submit_tun_write(uring_ctx, send_op, NULL /*data is in place*/, op->data_len);
+    int ret = iouring_submit_tun_write(uring_ctx, send_op, NULL /*data is in place*/, send_op->data_len);
     if (ret < 0) {
         io_op_free(uring_ctx, &send_op);
         return -1;
@@ -222,11 +222,12 @@ int tun_to_transfer(io_op_t *op, iouring_ctx_t *tun_uring_ctx) {
         return -1;
     }
     op->buf_addr = NULL;
+    return 0;
 }
 
 int transfer_to_udp(spsc_ring_t *transfer_ring, connection_t *conn, iouring_ctx_t *udp_uring_ctx) {
     buf_addr_t *buf_addr = NULL;
-    bool ok = spsc_ring_pop(transfer_ring, &buf_addr);
+    bool ok = spsc_ring_pop(transfer_ring, (void **)&buf_addr);
     if (ok) {
         int ret = tun_to_udp(conn, buf_addr, udp_uring_ctx);
         if (ret != 0) {
@@ -252,11 +253,12 @@ int udp_to_transfer(io_op_t *op, iouring_ctx_t *udp_uring_ctx) {
         log_error("UDP transfer ring is full");
         return -1;
     }
+    return 0;
 }
 
 int transfer_to_tun(spsc_ring_t *transfer_ring, int tun_fd, iouring_ctx_t *tun_uring_ctx) {
     buf_addr_t *buf_addr = NULL;
-    bool ok = spsc_ring_pop(transfer_ring, &buf_addr);
+    bool ok = spsc_ring_pop(transfer_ring, (void **)&buf_addr);
     if (ok) {
         int ret = udp_to_tun(tun_fd, buf_addr, tun_uring_ctx);
         if (ret != 0) {

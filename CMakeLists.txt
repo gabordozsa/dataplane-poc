@@ -15,6 +15,9 @@ find_package(OpenSSL 1.1.1 REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBURING REQUIRED liburing>=2.0)
 
+set(THREADS_PREFER_PTHREAD_FLAG TRUE)
+find_package(Threads)
+
 # Include directories
 include_directories(
     ${CMAKE_SOURCE_DIR}/include
@@ -32,6 +35,7 @@ set(COMMON_SOURCES
     src/connection.c
     src/packet_handler.c
     src/tun_udp_run.c
+    src/spsc_ring.c
 )
 
 # Create static library for common code
@@ -49,6 +53,7 @@ target_link_libraries(edge
     dtls_common
     ${OPENSSL_LIBRARIES}
     ${LIBURING_LIBRARIES}
+    Threads::Threads
 )
 
 # Edge_zero executable
@@ -59,6 +64,7 @@ target_link_libraries(edge_zero
     dtls_common
     ${OPENSSL_LIBRARIES}
     ${LIBURING_LIBRARIES}
+    Threads::Threads
 )
 
 # DTLS Forwarder executable
@@ -69,6 +75,7 @@ target_link_libraries(dtls_forwarder
     dtls_common
     ${OPENSSL_LIBRARIES}
     ${LIBURING_LIBRARIES}
+    Threads::Threads
 )
 
 # Installation

@@ -54,6 +54,26 @@ int udp_to_tun(int tun_fd,
                iouring_ctx_t *uring_ctx);
 
 /**
-* Return a comppleted recv context, if there is any
+ * Push data buffer from TUN to the transfer ring
+ */
+int tun_to_transfer(io_op_t *op, iouring_ctx_t *tun_uring_ctx);
+
+/**
+ * Pop data buffer from transfer ring and send it out via UDP
+ */
+int transfer_to_udp(spsc_ring_t *transfer_ring, connection_t *conn, iouring_ctx_t *udp_uring_ctx);
+
+/**
+ * Push data buffer from UDP to the transfer ring
+ */
+int udp_to_transfer(io_op_t *op, iouring_ctx_t *udp_uring_ctx);
+
+/**
+ * Pop data buffer from transfer ring and write it to TUN
+ */
+int transfer_to_tun(spsc_ring_t *transfer_ring, int tun_fd, iouring_ctx_t *tun_uring_ctx);
+
+/**
+* Return a completed recv context, if there is any
 */
 io_op_t *check_for_recv(iouring_ctx_t *uring_ctx, int *err);

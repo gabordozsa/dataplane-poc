@@ -127,7 +127,7 @@ static void iouring_free_buf_addr_pool(iouring_ctx_t *ctx) {
     ctx->buf_addr_pool = NULL;
 }
 
-static buf_addr_t *iouring_get_buf_addr(iouring_ctx_t *ctx) {
+buf_addr_t *iouring_get_buf_addr(iouring_ctx_t *ctx) {
     buf_addr_t *buf_addr = ctx->buf_addr_pool;
     if (!buf_addr) {
         log_error("Failed to get I/O buffer and address (%s)", ctx->config->name);
@@ -304,7 +304,6 @@ int iouring_multishot_recvmsg_out(iouring_ctx_t *ctx, io_op_t *op, unsigned cqe_
     }
 
     op->buf_idx = cqe_flags >> IORING_CQE_BUFFER_SHIFT;
-    op->buf_ctx = ctx;
     uint8_t *buf = ctx->br_bufs + op->buf_idx * BUF_SIZE;
     struct io_uring_recvmsg_out *mout = io_uring_recvmsg_validate(buf, op->data_len /*cqe->res*/, &op->msg);
     if (!mout) {
@@ -655,7 +654,7 @@ void iouring_cleanup(iouring_ctx_t *ctx) {
 }
 
 io_op_t* io_op_alloc(iouring_ctx_t *ctx, int op_type, int fd, bool is_multi) {
-    return io_op_alloc_buf(ctx, op_type, fd, is_multi, NULL /*buf_owner*/);
+    return io_op_alloc_buf(ctx, op_type, fd, is_multi, NULL /*buf_addr*/);
 }
 
 io_op_t* io_op_alloc_buf(iouring_ctx_t *ctx, int op_type, int fd, bool is_multi, buf_addr_t *buf_addr) {
@@ -684,7 +683,6 @@ io_op_t* io_op_alloc_buf(iouring_ctx_t *ctx, int op_type, int fd, bool is_multi,
                 op->buf_addr = buf_addr;
                 op->buffer = buf_addr->buf;
                 op->addr = &buf_addr->addr;
-            }
         }
     }
     return op;
@@ -710,7 +708,7 @@ void io_op_free(iouring_ctx_t *ctx, io_op_t **op) {
                 iouring_put_buf_addr(ctx, (*op)->buf_addr);
             } else if ( (*op)->buf_idx >= 0) {
                 // a provided br buffer got transfered to a send op
-                iouring_recycle_buffer((ctx, (*op)->buf_idx);
+                iouring_recycle_buffer(ctx, (*op)->buf_idx);
             }
             iouring_put_io_op(ctx, *op);
             *op = NULL;

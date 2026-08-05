@@ -1,7 +1,7 @@
 #ifndef IOURING_H
 #define IOURING_H
 
-#includ  "spsc_ring.h"
+#include  "spsc_ring.h"
 
 #include <liburing.h>
 #include <stdint.h>
@@ -224,7 +224,7 @@ io_op_t* io_op_alloc(iouring_ctx_t *ctx, int op_type, int fd, bool is_multi);
 /**
  *  Allocate I/O operation context with the provided data-addr buffer item
  */
-io_op_t* io_op_alloc_buf(iouring_ctx_t *ctx, int op_type, int fd, bool is_multi, buf_addr *buf_addr);
+io_op_t* io_op_alloc_buf(iouring_ctx_t *ctx, int op_type, int fd, bool is_multi, buf_addr_t *buf_addr);
 
 /**
  * Free I/O operation context
@@ -241,6 +241,11 @@ const char *op_type_str(int op_type);
  * Resubmit a completed receive op
  */
 int iouring_resubmit_recv(iouring_ctx_t *uring_ctx, io_op_t *completed);
+
+/**
+ * Get a buf_addr_t struct from the pool
+ */
+buf_addr_t *iouring_get_buf_addr(iouring_ctx_t *ctx);
 
 #endif // IOURING_H
 
