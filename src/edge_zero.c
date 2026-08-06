@@ -20,9 +20,9 @@
 static iouring_config_t tun_iouring_params = {
     .sq_depth           = 4,         // submissiom queue depth
     .cq_depth           = 512,       // completion queue depth
-    .n_io_ops           = 2048 + 16, // number of user context structs for submisson requests
+    .n_io_ops           = 4096,      // number of user context structs for submisson requests
     .n_initial_read_ops = 8,         // number of (single-shot) TUN reads submitted initially
-    .tr_depth           = 512,       // depth of transfer ring for data read from TUN
+    .tr_depth           = 4096,       // depth of transfer ring for data read from TUN
     .name               = "TUN"
 };
 
