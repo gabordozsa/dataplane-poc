@@ -53,7 +53,7 @@ struct buf_addr_t {
     uint8_t buf[BUF_SIZE];
     int data_len;
     struct sockaddr_storage addr;
-    struct buf_addr_t *next; // next io_buf_t in the free pool
+    spsc_ring_t *pool;
 };
 typedef struct buf_addr_t buf_addr_t;
 
@@ -96,7 +96,7 @@ struct iouring_ctx_t {
     iouring_config_t *config; // config params
     struct io_uring ring;
     io_op_t *io_op_pool;
-    buf_addr_t *buf_addr_pool;
+    spsc_ring_t *buf_addr_pool;
     uint8_t *br_bufs;
     struct io_uring_buf_ring *br;
     spsc_ring_t *transfer; // to transfer data to the other thread

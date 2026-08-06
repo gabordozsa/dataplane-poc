@@ -99,48 +99,53 @@ static void iouring_put_io_op(iouring_ctx_t *ctx,io_op_t *op) {
     log_debug("PUT io_op %p (%s)", op, ctx->config->name);
 }
 
-static int iouring_alloc_buf_addr_pool(iouring_ctx_t *ctx, int n_bufs) {
-    buf_addr_t *prev = NULL;
+static int iouring_alloc_buf_addr_pool(iouring_ctx_t *ctx) {
+    int n_bufs = ctx->config->n_io_ops;
+    ctx->buf_addr_pool = spsc_ring_create(n_bufs);
+    if (!ctx->buf_addr_pool) {
+        log_error("Failed to create buf_addr ring (%s)", ctx->config->name);
+        return -1;
+    }
     for (int i = 0; i < n_bufs; i++) {
         buf_addr_t *buf_addr = calloc(1, sizeof(buf_addr_t));
         if (!buf_addr) {
-            log_error("Failed to allocate I/O buffer and address pool (%s)", ctx->config->name);
+            log_error("Failed to allocate I/O buffer and address for pool (%s)", ctx->config->name);
             return -1;
         }
-        if (prev) {
-            prev->next = buf_addr;
-        } else {
-            ctx->buf_addr_pool = buf_addr;
+        buf_addr->pool = ctx->buf_addr_pool;
+        bool ok = spsc_ring_push(ctx->buf_addr_pool, (void *)buf_addr);
+        if (!ok) {
+            log_error("Failed to initialize buf_addr pool: ring is full (%s)", ctx->config->name);
+            return -1;
         }
-        prev = buf_addr;
     }
     return 0;
 }
 
 static void iouring_free_buf_addr_pool(iouring_ctx_t *ctx) {
-    buf_addr_t *buf_addr = ctx->buf_addr_pool;
-    while(buf_addr) {
-        buf_addr_t *prev = buf_addr;
-        buf_addr = buf_addr->next;
-        free(prev);
+    buf_addr_t *buf_addr;
+    while(spsc_ring_pop(ctx->buf_addr_pool, (void **)&buf_addr)) {
+        assert(buf_addr);
+        free(buf_addr);
     }
-    ctx->buf_addr_pool = NULL;
+    spsc_ring_destroy(ctx->buf_addr_pool);
 }
 
 buf_addr_t *iouring_get_buf_addr(iouring_ctx_t *ctx) {
-    buf_addr_t *buf_addr = ctx->buf_addr_pool;
-    if (!buf_addr) {
+    buf_addr_t *buf_addr;
+    bool ok = spsc_ring_pop(ctx->buf_addr_pool, (void **)&buf_addr);
+    if (!ok) {
         log_error("Failed to get I/O buffer and address (%s)", ctx->config->name);
         return NULL;
     }
-    ctx->buf_addr_pool = buf_addr->next;
-    buf_addr->next = NULL;
     return buf_addr;
 }
 
-static void iouring_put_buf_addr(iouring_ctx_t *ctx, buf_addr_t *buf_addr) {
-    buf_addr->next = ctx->buf_addr_pool;
-    ctx->buf_addr_pool = buf_addr;
+static void iouring_put_buf_addr(buf_addr_t *buf_addr) {
+    bool ok = spsc_ring_push(buf_addr->pool, (void *)buf_addr);
+    if (!ok) {
+        log_error("Failed to put buf_addr into the pool");
+    }
 }
 
 static int iouring_alloc_multishot_buffers(iouring_ctx_t *ctx) {
@@ -197,7 +202,7 @@ static int iouring_alloc_buffers(iouring_ctx_t *ctx) {
     }
 
     // alloc buffer pool for sends and single shot recvs
-     ret = iouring_alloc_buf_addr_pool(ctx, ctx->config->n_io_ops);
+     ret = iouring_alloc_buf_addr_pool(ctx);
      if (ret != 0) {
         return -1;
      }
@@ -705,7 +710,7 @@ void io_op_free(iouring_ctx_t *ctx, io_op_t **op) {
         } else {
             assert(!(*op)->buf_addr || (*op)->buf_idx == -1);
             if ((*op)->buf_addr) {
-                iouring_put_buf_addr(ctx, (*op)->buf_addr);
+                iouring_put_buf_addr((*op)->buf_addr);
             } else if ( (*op)->buf_idx >= 0) {
                 // a provided br buffer got transfered to a send op
                 iouring_recycle_buffer(ctx, (*op)->buf_idx);

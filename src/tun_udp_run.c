@@ -137,6 +137,13 @@ int run_zero_udp2tun(iouring_ctx_t *udp_uring_ctx, connection_t *conn, spsc_ring
         }
         if (op) {
             assert(op->op_type == OP_TYPE_UDP_RECV);
+            if (conn->addr_len == 0) {
+                assert(op->addr_len > 0);
+                memcpy(&conn->addr, op->addr, op->addr_len);
+                conn->addr_len = op->addr_len;
+                log_debug("Connection address is set to %s (len %d fd %d)",
+                            addr_to_string((struct sockaddr *)&conn->addr), conn->addr_len, conn->udp_fd);
+            }
             ret = udp_to_transfer(op, udp_uring_ctx);
             if (ret < 0)
                 break;
