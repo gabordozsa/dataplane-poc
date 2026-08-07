@@ -79,7 +79,7 @@ int finalize_completion(iouring_ctx_t *uring_ctx, struct io_uring_cqe *cqe, io_o
     return ret;
 }
 
-io_op_t *wait_for_recv(iouring_ctx_t *uring_ctx) {
+io_op_t *wait_for_recv(iouring_ctx_t *uring_ctx, volatile int *running) {
     int ret = 0;
     io_op_t *op = NULL;
     bool done = false;
@@ -90,13 +90,47 @@ io_op_t *wait_for_recv(iouring_ctx_t *uring_ctx) {
         if (wait_ret < 0) {
             if (wait_ret == -ETIME) {
                 //log_debug("Waiting in wait_for_recv ...");
-                continue;
+                if (running && *running) {
+                    continue;
+                } else {
+                    log_info("wait_for_recv signaled to quit");
+                    return NULL;
+                }
             }
             log_error("io_uring_wait_cqe failed");
             return NULL;
         }
         ret = finalize_completion(uring_ctx, cqe, &op);
         if (ret == -1) {
+            return NULL;
+        } else if (ret == 0) {
+            done = true;
+        }
+    }
+    return op;
+}
+
+io_op_t *check_for_recv(iouring_ctx_t *uring_ctx, int *err) {
+    int ret = 0;
+    io_op_t *op = NULL;
+    bool done = false;
+    *err = 0; 
+    //log_debug("Entering wait_for_recv2 ...");
+    while (!done) {
+        struct io_uring_cqe *cqe;
+        ret = iouring_peek_cqe(uring_ctx, &cqe);
+        if (ret < 0) {
+            if (ret == -EAGAIN) {
+                *err = 0;
+            } else {
+                *err = ret;
+            }
+            return NULL;
+        }
+        ret = finalize_completion(uring_ctx, cqe, &op);
+        if (ret == -1) {
+            log_error("ERROR check_for_recv() io_op_pool %p", uring_ctx->io_op_pool);
+            *err = -1;
             return NULL;
         } else if (ret == 0) {
             done = true;
@@ -167,134 +201,47 @@ int dtls_decrypt_and_write_tun(connection_t *conn,
 
 
 int tun_to_udp(connection_t *conn,
-               buf_addr_t *buf_addr,
-               iouring_ctx_t *udp_uring_ctx) {
+               io_op_t *tun_read_op,
+               iouring_ctx_t *tun2udp_ctx) {
     if (at_log_level(LOG_DEBUG)) {
-        print_ip_packet_info(buf_addr->buf, buf_addr->data_len, "TUN -> UDP");
+        print_ip_packet_info(tun_read_op->buffer, tun_read_op->data_len, "TUN -> UDP");
     }
 
-    io_op_t *send_op = io_op_alloc_buf(udp_uring_ctx, OP_TYPE_UDP_SEND, conn->udp_fd, false /*is_multi*/, buf_addr);
+    io_op_t *send_op = io_op_alloc_buf(tun2udp_ctx, OP_TYPE_UDP_SEND, conn->udp_fd, false /*is_multi*/, tun_read_op);
     if (!send_op) {
         return -1;
     }
 
-    int ret = iouring_submit_udp_send(udp_uring_ctx, send_op,
+    int ret = iouring_submit_udp_send(tun2udp_ctx, send_op,
                                       (struct sockaddr *)&conn->addr, conn->addr_len,
                                       NULL /*data is already in place*/, send_op->data_len);
     if (ret < 0) {
-        io_op_free(udp_uring_ctx, &send_op);
+        io_op_free(tun2udp_ctx, &send_op);
         return -1;
     }
     return 0;
 }
 
 int udp_to_tun(int tun_fd,
-               buf_addr_t *buf_addr,
-               iouring_ctx_t *uring_ctx) {
+               io_op_t *udp_recv_op,
+               iouring_ctx_t *udp2tun_ctx) {
     if (at_log_level(LOG_DEBUG)) {
-        print_ip_packet_info(buf_addr->buf, buf_addr->data_len, "UDP -> TUN");
+        print_ip_packet_info(udp_recv_op->buffer, udp_recv_op->data_len, "UDP -> TUN");
     }
 
-    io_op_t *send_op = io_op_alloc_buf(uring_ctx, OP_TYPE_TUN_WRITE, tun_fd, false /*is_multi*/, buf_addr);
+    io_op_t *send_op = io_op_alloc_buf(udp2tun_ctx, OP_TYPE_TUN_WRITE, tun_fd, false /*is_multi*/, udp_recv_op);
     if (!send_op) {
         return -1;
     }
 
-    int ret = iouring_submit_tun_write(uring_ctx, send_op, NULL /*data is in place*/, send_op->data_len);
+    int ret = iouring_submit_tun_write(udp2tun_ctx, send_op, NULL /*data is in place*/, send_op->data_len);
     if (ret < 0) {
-        io_op_free(uring_ctx, &send_op);
+        io_op_free(udp2tun_ctx, &send_op);
         return -1;
     }
     return 0;
 }
 
-int tun_to_transfer(io_op_t *op, iouring_ctx_t *tun_uring_ctx) {
-    if (at_log_level(LOG_DEBUG)) {
-        print_ip_packet_info(op->buffer, op->data_len, "TUN -> transfer");
-    }
-    assert(!op->is_multi);
-    // push the buffer with data into to the transfer ring, for the
-    // udp thread to process
-    op->buf_addr->data_len = op->data_len;
-    bool ok = spsc_ring_push(tun_uring_ctx->transfer, op->buf_addr);
-    if (!ok) {
-        log_error("TUN transfer ring is full");
-        return -1;
-    }
-    op->buf_addr = NULL;
-    return 0;
-}
 
-int transfer_to_udp(spsc_ring_t *transfer_ring, connection_t *conn, iouring_ctx_t *udp_uring_ctx) {
-    buf_addr_t *buf_addr = NULL;
-    bool ok = spsc_ring_pop(transfer_ring, (void **)&buf_addr);
-    if (ok) {
-        int ret = tun_to_udp(conn, buf_addr, udp_uring_ctx);
-        if (ret != 0) {
-            return -1;
-        }
-    }
-    return 0;
-}
-
-int udp_to_transfer(io_op_t *op, iouring_ctx_t *udp_uring_ctx) {
-     if (at_log_level(LOG_DEBUG)) {
-        print_ip_packet_info(op->buffer, op->data_len, "UDP -> transfer");
-    }
-    assert(op->is_multi);
-    buf_addr_t *buf_addr = iouring_get_buf_addr(udp_uring_ctx);
-    if (!buf_addr) {
-        return -1;
-    }
-    memcpy(buf_addr->buf, op->buffer, op->data_len);
-    buf_addr->data_len = op->data_len;
-    bool ok = spsc_ring_push(udp_uring_ctx->transfer, buf_addr);
-    if (!ok) {
-        log_error("UDP transfer ring is full");
-        return -1;
-    }
-    return 0;
-}
-
-int transfer_to_tun(spsc_ring_t *transfer_ring, int tun_fd, iouring_ctx_t *tun_uring_ctx) {
-    buf_addr_t *buf_addr = NULL;
-    bool ok = spsc_ring_pop(transfer_ring, (void **)&buf_addr);
-    if (ok) {
-        int ret = udp_to_tun(tun_fd, buf_addr, tun_uring_ctx);
-        if (ret != 0) {
-            return -1;
-        }
-    }
-    return 0;
-}
-
-io_op_t *check_for_recv(iouring_ctx_t *uring_ctx, int *err) {
-    int ret = 0;
-    io_op_t *op = NULL;
-    bool done = false;
-    *err = 0; 
-    //log_debug("Entering wait_for_recv2 ...");
-    while (!done) {
-        struct io_uring_cqe *cqe;
-        ret = iouring_peek_cqe(uring_ctx, &cqe);
-        if (ret < 0) {
-            if (ret == -EAGAIN) {
-                *err = 0;
-            } else {
-                *err = ret;
-            }
-            return NULL;
-        }
-        ret = finalize_completion(uring_ctx, cqe, &op);
-        if (ret == -1) {
-            log_error("ERROR check_for_recv() io_op_pool %p", uring_ctx->io_op_pool);
-            *err = -1;
-            return NULL;
-        } else if (ret == 0) {
-            done = true;
-        }
-    }
-    return op;
-}
 
 

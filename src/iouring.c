@@ -662,18 +662,18 @@ io_op_t* io_op_alloc(iouring_ctx_t *ctx, int op_type, int fd, bool is_multi) {
     return io_op_alloc_buf(ctx, op_type, fd, is_multi, NULL /*buf_addr*/);
 }
 
-io_op_t* io_op_alloc_buf(iouring_ctx_t *ctx, int op_type, int fd, bool is_multi, buf_addr_t *buf_addr) {
+io_op_t* io_op_alloc_buf(iouring_ctx_t *ctx, int op_type, int fd, bool is_multi, io_op_t *buf_owner) {
     io_op_t *op = iouring_get_io_op(ctx);
     if (!op) {
         return NULL;
     }
-    assert(!is_multi || !buf_addr);
+    assert(!is_multi || !buf_owner);
     op->is_multi = is_multi;
     op->op_type = op_type;
     op->fd = fd;
 
     if (!is_multi) {
-        if(!buf_addr) {
+        if(!buf_owner) {
             buf_addr_t *buf_addr = iouring_get_buf_addr(ctx);
             if (!buf_addr) {
                 log_error("Failed to allocate I/O buffer and address");
@@ -684,10 +684,19 @@ io_op_t* io_op_alloc_buf(iouring_ctx_t *ctx, int op_type, int fd, bool is_multi,
             op->buffer = buf_addr->buf;
             op->addr = &buf_addr->addr;
         } else {
-                op->data_len = buf_addr->data_len;
-                op->buf_addr = buf_addr;
-                op->buffer = buf_addr->buf;
-                op->addr = &buf_addr->addr;
+            if (!buf_owner->is_multi) {
+                op->data_len = buf_owner->data_len;
+                op->buf_addr = buf_owner->buf_addr;
+                op->buffer = buf_owner->buf_addr->buf;
+                op->addr = &buf_owner->buf_addr->addr;
+                buf_owner->buf_addr = NULL;
+            } else {
+                // data is in an io_uring managed br buffer
+                op->buf_idx = buf_owner->buf_idx;
+                op->buffer = buf_owner->buffer;
+                op->data_len = buf_owner->data_len;
+                buf_owner->buf_idx = DO_NOT_FREE;
+            }
         }
     }
     return op;
@@ -700,7 +709,7 @@ void io_op_free(iouring_ctx_t *ctx, io_op_t **op) {
                 // only recycle buffer, multishot op is still in use
                 iouring_recycle_buffer(ctx, (*op)->buf_idx);
                 (*op)->buf_idx = -1;
-            } else {
+            } else if ((*op)->buf_idx != DO_NOT_FREE) {
                 log_debug("Freeing multishot op");
                 iouring_put_io_op(ctx, *op);
                 *op = NULL;

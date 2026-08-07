@@ -9,7 +9,7 @@
 #include <netinet/ip.h>
 #include <arpa/inet.h>
 
-static log_level_t current_log_level = LOG_INFO;
+static volatile log_level_t current_log_level = LOG_INFO;
 
 bool at_log_level(log_level_t l) {
     if (current_log_level <= l) {

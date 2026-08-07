@@ -48,6 +48,10 @@ void io_uring_prep_read_multishot(struct io_uring_sqe *sqe,
 // Also, we can have larger UDP payloads during the DTLS handshake.
 #define BUF_SIZE      1600
 
+// Special buf_idx value to avoid freeing an active multi io_op if
+// its provided buffer got transfered to a send op
+#define DO_NOT_FREE -2
+
 // buffer pool items (for single-shot ops)
 struct buf_addr_t {
     uint8_t buf[BUF_SIZE];
@@ -224,7 +228,7 @@ io_op_t* io_op_alloc(iouring_ctx_t *ctx, int op_type, int fd, bool is_multi);
 /**
  *  Allocate I/O operation context with the provided data-addr buffer item
  */
-io_op_t* io_op_alloc_buf(iouring_ctx_t *ctx, int op_type, int fd, bool is_multi, buf_addr_t *buf_addr);
+io_op_t* io_op_alloc_buf(iouring_ctx_t *ctx, int op_type, int fd, bool is_multi, io_op_t *buf_owner);
 
 /**
  * Free I/O operation context

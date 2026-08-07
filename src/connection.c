@@ -210,7 +210,7 @@ int do_dtls_handshake(iouring_ctx_t *uring_ctx, connection_t *conn) {
                     return -1;
                 }
                 // Receive UDP message
-                io_op_t *op = wait_for_recv(uring_ctx);
+                io_op_t *op = wait_for_recv(uring_ctx, NULL);
                 if (!op) {
                     return -1;
                 }

@@ -200,7 +200,7 @@ int forwarder_run(forwarder_ctx_t *ctx) {
     // Main event loop
     io_op_t *op = NULL;
     while (true) {
-        op = wait_for_recv(ctx->uring_ctx);
+        op = wait_for_recv(ctx->uring_ctx, NULL);
         if (!op) {
            return -1;
         }

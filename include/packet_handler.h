@@ -29,7 +29,12 @@ int dtls_decrypt_and_write_tun(connection_t *conn,
 /**
  * Wait for the next receive completion
  */
-io_op_t *wait_for_recv(iouring_ctx_t *uring_ctx);
+io_op_t *wait_for_recv(iouring_ctx_t *uring_ctx, volatile int *running);
+
+/**
+* Return a completed recv context, if there is any
+*/
+io_op_t *check_for_recv(iouring_ctx_t *uring_ctx, int *err);
 
 /**
  * Send UDP datagram by io_uring
@@ -43,37 +48,13 @@ int send_udp(iouring_ctx_t *uring_ctx, connection_t *conn,
  * Forward IP packet from TUN to UDP socket
  */
 int tun_to_udp(connection_t *conn,
-               buf_addr_t *buf_addr,
+               io_op_t *buf_owner,
                iouring_ctx_t *uring_ctx);
 
 /**
  * Forward IP packet from UDP socket to TUN
  */
 int udp_to_tun(int tun_fd,
-               buf_addr_t *buf_addr,
+               io_op_t *buf_owner,
                iouring_ctx_t *uring_ctx);
 
-/**
- * Push data buffer from TUN to the transfer ring
- */
-int tun_to_transfer(io_op_t *op, iouring_ctx_t *tun_uring_ctx);
-
-/**
- * Pop data buffer from transfer ring and send it out via UDP
- */
-int transfer_to_udp(spsc_ring_t *transfer_ring, connection_t *conn, iouring_ctx_t *udp_uring_ctx);
-
-/**
- * Push data buffer from UDP to the transfer ring
- */
-int udp_to_transfer(io_op_t *op, iouring_ctx_t *udp_uring_ctx);
-
-/**
- * Pop data buffer from transfer ring and write it to TUN
- */
-int transfer_to_tun(spsc_ring_t *transfer_ring, int tun_fd, iouring_ctx_t *tun_uring_ctx);
-
-/**
-* Return a completed recv context, if there is any
-*/
-io_op_t *check_for_recv(iouring_ctx_t *uring_ctx, int *err);

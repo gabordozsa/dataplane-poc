@@ -20,8 +20,8 @@
 static iouring_config_t tun_iouring_params = {
     .sq_depth           = 4,         // submissiom queue depth
     .cq_depth           = 512,       // completion queue depth
-    .n_io_ops           = 4096,      // number of user context structs for submisson requests
-    .n_initial_read_ops = 8,         // number of (single-shot) TUN reads submitted initially
+    .n_io_ops           = 1024,      // number of user context structs for submisson requests
+    .n_initial_read_ops = 32,         // number of (single-shot) TUN reads submitted initially
     .tr_depth           = 4096,       // depth of transfer ring for data read from TUN
     .name               = "TUN"
 };
@@ -32,7 +32,7 @@ static iouring_config_t udp_iouring_params = {
     .cq_depth           = 1024,   // completion queue depth
     .br_n_bufs          = 2048,   // number of provuded buffers in buffer ring
     .br_gid             = 1,      // group ID of buffer ring
-    .n_io_ops           = 512,    // number of user context structs for submisson requests
+    .n_io_ops           = 1024,    // number of user context structs for submisson requests
     .tr_depth           = 512,    // depth of transfer ring for data received via UDP
     .name               = "UDP"
 };
@@ -54,9 +54,23 @@ static void print_config() {
 static volatile int running = 1;
 
 static void signal_handler(int signum) {
-    (void)signum;
+    if (signum == SIGTSTP) {
+        if (!at_log_level(LOG_DEBUG)) {
+            log_info("Received SIGSTP, switching log level to LOG_DEBUG ...");
+            log_set_level(LOG_DEBUG);
+        } else {
+            log_info("Received SIGSTP, switching log level to LOG_INFO ...");
+            log_set_level(LOG_INFO);
+        }
+        return;
+    }
     log_info("Received signal, shutting down...");
-    running = 0;
+    if (running) {
+        running = 0;
+    } else {
+        log_info("Forced exit ...");
+        exit(-1);
+    }
 }
 
 void usage(const char *cmd) {
@@ -67,29 +81,31 @@ void usage(const char *cmd) {
 
 // multi threading
 typedef struct {
-    iouring_ctx_t *tun_uring_ctx;
-    iouring_ctx_t *udp_uring_ctx;
+    iouring_ctx_t *tun2udp_ctx;
+    iouring_ctx_t *udp2tun_ctx;
     connection_t *conn;
     int tun_fd;
     volatile int *running;
 } thread_args;
 
-void *tun_thread_func(void *a) {
+void *tun2udp_thread_func(void *a) {
     thread_args *args = (thread_args *)a;
-    iouring_ctx_t *tun_uring_ctx = args->tun_uring_ctx;
+    iouring_ctx_t *tun2udp_ctx = args->tun2udp_ctx;
     int tun_fd = args->tun_fd;
-    int ret =  run_zero_tun2udp(tun_uring_ctx, tun_fd, args->udp_uring_ctx->transfer, args->running);
+    connection_t *conn = args->conn;
+    int ret =  run_zero_tun2udp(tun2udp_ctx, tun_fd, conn, args->running);
     if (ret != 0) {
         return "error";
     }
     return NULL;
 }
 
-void *udp_thread_func(void *a) {
+void *udp2tun_thread_func(void *a) {
     thread_args *args = (thread_args *)a;
-    iouring_ctx_t *udp_uring_ctx = args->udp_uring_ctx;
+    iouring_ctx_t *udp_uring_ctx = args->udp2tun_ctx;
     connection_t *conn = args->conn;
-    int ret =  run_zero_udp2tun(udp_uring_ctx, conn, args->tun_uring_ctx->transfer, args->running);
+    int tun_fd = args->tun_fd;
+    int ret =  run_zero_udp2tun(udp_uring_ctx, conn, tun_fd, args->running);
     if (ret != 0) {
         return "error";
     }
@@ -130,6 +146,7 @@ int main(int argc, char **argv) {
     // Set up signal handlers
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
+    signal(SIGTSTP, signal_handler);
 
     // Initialize logging
     log_set_level(LOG_LEVEL);
@@ -201,16 +218,16 @@ int main(int argc, char **argv) {
     log_debug("Submitted initial TUN read operation(s)");
 
     thread_args th_args = {
-        .tun_uring_ctx = tun_uring_ctx,
-        .udp_uring_ctx = udp_uring_ctx,
-        .conn          = conn,
-        .tun_fd        = tun->fd,
-        .running       = &running
+        .tun2udp_ctx = tun_uring_ctx,
+        .udp2tun_ctx = udp_uring_ctx,
+        .conn        = conn,
+        .tun_fd      = tun->fd,
+        .running     = &running
     };
 
     // start TUN thread
     pthread_t tun_thread;
-    ret = pthread_create(&tun_thread, NULL, tun_thread_func, &th_args);
+    ret = pthread_create(&tun_thread, NULL, tun2udp_thread_func, &th_args);
     if (ret != 0) {
         log_error("Failed to create TUN thread: %s", strerror(ret));
         return -1;
@@ -218,7 +235,7 @@ int main(int argc, char **argv) {
 
     // start UDP thread
     pthread_t udp_thread;
-    ret = pthread_create(&udp_thread, NULL, udp_thread_func, &th_args);
+    ret = pthread_create(&udp_thread, NULL, udp2tun_thread_func, &th_args);
     if (ret != 0) {
         log_error("Failed to create UDP thread: %s", strerror(ret));
         return -1;
