@@ -53,13 +53,12 @@ void io_uring_prep_read_multishot(struct io_uring_sqe *sqe,
 #define DO_NOT_FREE -2
 
 // buffer pool items (for single-shot ops)
-struct buf_addr_t {
-    uint8_t buf[BUF_SIZE];
+struct buf_t {
+    uint8_t buffer[BUF_SIZE];
     int data_len;
-    struct sockaddr_storage addr;
-    spsc_ring_t *pool;
+    struct buf_t *next;
 };
-typedef struct buf_addr_t buf_addr_t;
+typedef struct buf_t buf_t;
 
 // I/O operation context
 struct io_op_t {
@@ -69,10 +68,11 @@ struct io_op_t {
     uint8_t *buffer;
     int data_len;
     int buf_idx; // if buffer is from multishot buffer ring
-    buf_addr_t *buf_addr; // if buffer is from single-shot pool
+    buf_t *buf_ptr; // if buffer is from single-shot pool
     struct msghdr msg;
     struct iovec iov;
     struct sockaddr_storage *addr;
+     struct sockaddr_storage addr_buf;
     socklen_t addr_len;
     struct io_op_t *next; // next op in the free pool
 };
@@ -99,7 +99,7 @@ struct iouring_ctx_t {
     iouring_config_t *config; // config params
     struct io_uring ring;
     io_op_t *io_op_pool;
-    spsc_ring_t *buf_addr_pool;
+    buf_t *buf_pool;
     uint8_t *br_bufs;
     struct io_uring_buf_ring *br;
     io_stats_t stats;
@@ -245,9 +245,9 @@ const char *op_type_str(int op_type);
 int iouring_resubmit_recv(iouring_ctx_t *uring_ctx, io_op_t *completed);
 
 /**
- * Get a buf_addr_t struct from the pool
+ * Get a buf_t struct from the pool
  */
-buf_addr_t *iouring_get_buf_addr(iouring_ctx_t *ctx);
+buf_t *iouring_get_buf(iouring_ctx_t *ctx);
 
 #endif // IOURING_H
 

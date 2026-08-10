@@ -44,7 +44,6 @@ int finalize_completion(iouring_ctx_t *uring_ctx, struct io_uring_cqe *cqe, io_o
             break;
         case OP_TYPE_TUN_READ:
             if (op->is_multi) {
-                assert(0); // NOT TESTED YET
                 ret = iouring_multishot_read_out(uring_ctx, op, cqe_flags);
             } else {
                 log_debug("TUN read %d bytes", op->data_len);

@@ -99,53 +99,47 @@ static void iouring_put_io_op(iouring_ctx_t *ctx,io_op_t *op) {
     log_debug("PUT io_op %p (%s)", op, ctx->config->name);
 }
 
-static int iouring_alloc_buf_addr_pool(iouring_ctx_t *ctx) {
+static int iouring_alloc_buf_pool(iouring_ctx_t *ctx) {
     int n_bufs = ctx->config->n_io_ops;
-    ctx->buf_addr_pool = spsc_ring_create(n_bufs);
-    if (!ctx->buf_addr_pool) {
-        log_error("Failed to create buf_addr ring (%s)", ctx->config->name);
-        return -1;
-    }
+    buf_t *prev = NULL;
     for (int i = 0; i < n_bufs; i++) {
-        buf_addr_t *buf_addr = calloc(1, sizeof(buf_addr_t));
-        if (!buf_addr) {
-            log_error("Failed to allocate I/O buffer and address for pool (%s)", ctx->config->name);
+        buf_t *buf = calloc(1, sizeof(buf_t));
+        if (!buf) {
+            log_error("Failed to allocate I/O buffer for pool (%s)", ctx->config->name);
             return -1;
         }
-        buf_addr->pool = ctx->buf_addr_pool;
-        bool ok = spsc_ring_push(ctx->buf_addr_pool, (void *)buf_addr);
-        if (!ok) {
-            log_error("Failed to initialize buf_addr pool: ring is full (%s)", ctx->config->name);
-            return -1;
+        if (prev) {
+            prev->next = buf;
+        } else {
+            ctx->buf_pool = buf;
         }
+        prev = buf;
     }
     return 0;
 }
 
-static void iouring_free_buf_addr_pool(iouring_ctx_t *ctx) {
-    buf_addr_t *buf_addr;
-    while(spsc_ring_pop(ctx->buf_addr_pool, (void **)&buf_addr)) {
-        assert(buf_addr);
-        free(buf_addr);
+static void iouring_free_buf_pool(iouring_ctx_t *ctx) {
+    buf_t *buf = ctx->buf_pool;
+    while (buf) {
+        buf_t *next = buf->next;
+        free(buf);
+        buf = next;
     }
-    spsc_ring_destroy(ctx->buf_addr_pool);
 }
 
-buf_addr_t *iouring_get_buf_addr(iouring_ctx_t *ctx) {
-    buf_addr_t *buf_addr;
-    bool ok = spsc_ring_pop(ctx->buf_addr_pool, (void **)&buf_addr);
-    if (!ok) {
-        log_error("Failed to get I/O buffer and address (%s)", ctx->config->name);
+buf_t *iouring_get_buf(iouring_ctx_t *ctx) {
+    buf_t *buf = ctx->buf_pool;
+    if (!buf) {
+        log_error("Failed to get I/O buffer from pool (%s)", ctx->config->name);
         return NULL;
     }
-    return buf_addr;
+    ctx->buf_pool = buf->next;
+    return buf;
 }
 
-static void iouring_put_buf_addr(buf_addr_t *buf_addr) {
-    bool ok = spsc_ring_push(buf_addr->pool, (void *)buf_addr);
-    if (!ok) {
-        log_error("Failed to put buf_addr into the pool");
-    }
+static void iouring_put_buf(iouring_ctx_t *ctx, buf_t *buf) {
+    buf->next = ctx->buf_pool;
+    ctx->buf_pool = buf;
 }
 
 static int iouring_alloc_multishot_buffers(iouring_ctx_t *ctx) {
@@ -180,7 +174,7 @@ static int iouring_alloc_multishot_buffers(iouring_ctx_t *ctx) {
 
 void iouring_free_buffers(iouring_ctx_t *ctx) {
     iouring_free_io_op_pool(ctx);
-    iouring_free_buf_addr_pool(ctx);
+    iouring_free_buf_pool(ctx);
     if (USE_MULTI_RECV || USE_MULTI_READ) {
         int ret = io_uring_free_buf_ring(&ctx->ring,
                                          ctx->br,
@@ -202,7 +196,7 @@ static int iouring_alloc_buffers(iouring_ctx_t *ctx) {
     }
 
     // alloc buffer pool for sends and single shot recvs
-     ret = iouring_alloc_buf_addr_pool(ctx);
+     ret = iouring_alloc_buf_pool(ctx);
      if (ret != 0) {
         return -1;
      }
@@ -357,7 +351,7 @@ int iouring_submit_multishot_read_op(iouring_ctx_t *ctx, io_op_t *op) {
 }
 
 int iouring_submit_multishot_read(iouring_ctx_t *ctx, int fd) {
-    io_op_t *op = io_op_alloc(ctx, OP_TYPE_UDP_RECV, fd, true/*is_multi*/);
+    io_op_t *op = io_op_alloc(ctx, OP_TYPE_TUN_READ, fd, true/*is_multi*/);
     if (!op) {
         return -1;
     }
@@ -667,7 +661,7 @@ void iouring_cleanup(iouring_ctx_t *ctx) {
 }
 
 io_op_t* io_op_alloc(iouring_ctx_t *ctx, int op_type, int fd, bool is_multi) {
-    return io_op_alloc_buf(ctx, op_type, fd, is_multi, NULL /*buf_addr*/);
+    return io_op_alloc_buf(ctx, op_type, fd, is_multi, NULL /*buf*/);
 }
 
 io_op_t* io_op_alloc_buf(iouring_ctx_t *ctx, int op_type, int fd, bool is_multi, io_op_t *buf_owner) {
@@ -679,25 +673,24 @@ io_op_t* io_op_alloc_buf(iouring_ctx_t *ctx, int op_type, int fd, bool is_multi,
     op->is_multi = is_multi;
     op->op_type = op_type;
     op->fd = fd;
+    op->addr = &op->addr_buf;
 
     if (!is_multi) {
         if(!buf_owner) {
-            buf_addr_t *buf_addr = iouring_get_buf_addr(ctx);
-            if (!buf_addr) {
+            buf_t *buf_ptr = iouring_get_buf(ctx);
+            if (!buf_ptr) {
                 log_error("Failed to allocate I/O buffer and address");
                 iouring_put_io_op(ctx, op);
                 return NULL;
             }
-            op->buf_addr = buf_addr;
-            op->buffer = buf_addr->buf;
-            op->addr = &buf_addr->addr;
+            op->buf_ptr = buf_ptr;
+            op->buffer = buf_ptr->buffer;
         } else {
             if (!buf_owner->is_multi) {
                 op->data_len = buf_owner->data_len;
-                op->buf_addr = buf_owner->buf_addr;
-                op->buffer = buf_owner->buf_addr->buf;
-                op->addr = &buf_owner->buf_addr->addr;
-                buf_owner->buf_addr = NULL;
+                op->buf_ptr = buf_owner->buf_ptr;
+                op->buffer = buf_owner->buf_ptr->buffer;
+                buf_owner->buf_ptr = NULL;
             } else {
                 // data is in an io_uring managed br buffer
                 op->buf_idx = buf_owner->buf_idx;
@@ -725,9 +718,9 @@ void io_op_free(iouring_ctx_t *ctx, io_op_t **op) {
             //memset(&(*op)->msg, 0, sizeof((*op)->msg));
             //(*op)->msg.msg_namelen = sizeof(struct sockaddr_storage);
         } else {
-            assert(!(*op)->buf_addr || (*op)->buf_idx == -1);
-            if ((*op)->buf_addr) {
-                iouring_put_buf_addr((*op)->buf_addr);
+            assert(!(*op)->buf_ptr || (*op)->buf_idx == -1);
+            if ((*op)->buf_ptr) {
+                iouring_put_buf(ctx, (*op)->buf_ptr);
             } else if ( (*op)->buf_idx >= 0) {
                 // a provided br buffer got transfered to a send op
                 iouring_recycle_buffer(ctx, (*op)->buf_idx);
