@@ -20,9 +20,9 @@
 static iouring_config_t tun_iouring_params = {
     .sq_depth           = 4,         // submissiom queue depth
     .cq_depth           = 512,       // completion queue depth
-    .n_io_ops           = 1024,      // number of user context structs for submisson requests
-    .n_initial_read_ops = 32,         // number of (single-shot) TUN reads submitted initially
-    .tr_depth           = 4096,       // depth of transfer ring for data read from TUN
+    .br_n_bufs          = 2048,      // number of provuded buffers in buffer ring
+    .br_gid             = 1,         // group ID of buffer ring
+    .n_io_ops           = 4096,      // number of user context structs for submisson requests
     .name               = "TUN"
 };
 
@@ -31,9 +31,8 @@ static iouring_config_t udp_iouring_params = {
     .sq_depth           = 4,      // submissiom queue depth
     .cq_depth           = 1024,   // completion queue depth
     .br_n_bufs          = 2048,   // number of provuded buffers in buffer ring
-    .br_gid             = 1,      // group ID of buffer ring
+    .br_gid             = 2,      // group ID of buffer ring
     .n_io_ops           = 1024,    // number of user context structs for submisson requests
-    .tr_depth           = 512,    // depth of transfer ring for data received via UDP
     .name               = "UDP"
 };
 
@@ -47,8 +46,7 @@ static void print_config() {
              tun_iouring_params.sq_depth,
              tun_iouring_params.cq_depth,
              tun_iouring_params.n_io_ops,
-             tun_iouring_params.br_n_bufs,
-             tun_iouring_params.n_initial_read_ops);
+             tun_iouring_params.br_n_bufs);
 }
 
 static volatile int running = 1;

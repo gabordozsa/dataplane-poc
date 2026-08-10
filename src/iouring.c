@@ -248,13 +248,8 @@ iouring_ctx_t* iouring_init(iouring_config_t *c) {
         return NULL;
     }
 
-    ctx->transfer = spsc_ring_create(c->tr_depth);
-    if (!ctx) {
-        return NULL;
-    }
-
-    log_info("Initialized io-uring with sq depth %u, cq depth %u, cqe_no_drop %d  tr_depth %d (%s)",
-              c->sq_depth, c->cq_depth, cqe_no_drop, c->tr_depth, c->name);
+    log_info("Initialized io-uring with sq depth %u, cq depth %u, cqe_no_drop %d (%s)",
+              c->sq_depth, c->cq_depth, cqe_no_drop, c->name);
 
     return ctx;
 }
@@ -340,18 +335,22 @@ int iouring_multishot_recvmsg_out(iouring_ctx_t *ctx, io_op_t *op, unsigned cqe_
     return 0;
 }
 
-int iouring_multishot_read_out(iouring_ctx_t *ctx, io_op_t *op, unsigned cqe_flags) {
-    if (!(cqe_flags & IORING_CQE_F_BUFFER)) {
-        log_error("Buffer selected flag is not set for multishot read");
+static
+int iouring_submit_multishot_read_op(iouring_ctx_t *ctx, io_op_t *op) {
+    assert(op->is_multi && op->op_type == OP_TYPE_TUN_READ);
+
+    struct io_uring_sqe *sqe;
+    sqe = io_uring_get_sqe(&ctx->ring);
+    if (!sqe) {
+        log_warn("Submission queue is full");
         return -1;
     }
-
-    op->buf_idx = cqe_flags >> IORING_CQE_BUFFER_SHIFT;
-    op->buffer = ctx->br_bufs + op->buf_idx * BUF_SIZE;
-
-    if (!(cqe_flags & IORING_CQE_F_MORE)) {
-        // multishot request is done
-        log_error("Multishot read is done unexpectedly");
+    io_uring_prep_read_multishot(sqe, op->fd, 0 /*nbytes*/, 0, ctx->config->br_gid);
+    io_uring_sqe_set_flags(sqe, IOSQE_BUFFER_SELECT);
+    sqe->buf_group = ctx->config->br_gid;
+    io_uring_sqe_set_data(sqe, op);
+    if (io_uring_submit(&ctx->ring) < 0) {
+        log_error("Failed to submit multishot read SQE");
         return -1;
     }
     return 0;
@@ -364,22 +363,31 @@ int iouring_submit_multishot_read(iouring_ctx_t *ctx, int fd) {
     }
     assert(op->is_multi == true);
 
-    struct io_uring_sqe *sqe;
-    sqe = io_uring_get_sqe(&ctx->ring);
-    if (!sqe) {
-        log_warn("Submission queue is full");
+    return iouring_submit_multishot_read_op(ctx, op);
+}
+
+int iouring_multishot_read_out(iouring_ctx_t *ctx, io_op_t *op, unsigned cqe_flags) {
+    if (!(cqe_flags & IORING_CQE_F_BUFFER)) {
+        log_error("Buffer selected flag is not set for multishot read");
         return -1;
     }
-    io_uring_sqe_set_data(sqe, op);
-    io_uring_sqe_set_flags(sqe, IOSQE_BUFFER_SELECT);
-    sqe->buf_group = ctx->config->br_gid;
-    io_uring_prep_read_multishot(sqe, op->fd, 0 /*nbytes*/, 0, ctx->config->br_gid);
-    if (io_uring_submit(&ctx->ring) < 0) {
-        log_error("Failed to submit multishot read SQE");
-        return -1;
+
+    op->buf_idx = cqe_flags >> IORING_CQE_BUFFER_SHIFT;
+    op->buffer = ctx->br_bufs + op->buf_idx * BUF_SIZE;
+
+    if (!(cqe_flags & IORING_CQE_F_MORE)) {
+        // multishot request is done
+        int ret = iouring_submit_multishot_read_op(ctx, op);
+        if (ret != 0) {
+            log_error("Failed to re-submit multi-read op");
+            return -1;
+        }
+        ctx->stats.multi_recv_rearmed++;
+        log_debug("Multishot read got completed and re-submitted.");
     }
     return 0;
 }
+
 
 int iouring_initial_udp_recvs(iouring_ctx_t *ctx, int fd) {
     if (USE_MULTI_RECV) {

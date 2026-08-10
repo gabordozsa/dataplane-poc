@@ -12,8 +12,8 @@
 #define HAS_MULTI_RECV true
 #define USE_MULTI_RECV true
 
-#define HAS_MULTI_READ false
-#define USE_MULTI_READ false
+#define HAS_MULTI_READ true
+#define USE_MULTI_READ true
 
 #if !(HAS_MULTI_RECV)
 void io_uring_prep_recvmsg_multishot(struct io_uring_sqe *sqe,
@@ -91,7 +91,6 @@ typedef struct {
     const int n_io_ops;  // size of io_op  pool
     const int n_initial_recv_ops; // number of initial single-shot recvs submitted
     const int n_initial_read_ops; // number of initial single-shot reads submitted
-    const int tr_depth; // transfer ring depth (to transfer data to the other thread)
     const char *name;   // name to corellate log messages
 } iouring_config_t;
 
@@ -103,7 +102,6 @@ struct iouring_ctx_t {
     spsc_ring_t *buf_addr_pool;
     uint8_t *br_bufs;
     struct io_uring_buf_ring *br;
-    spsc_ring_t *transfer; // to transfer data to the other thread
     io_stats_t stats;
 };
 typedef struct iouring_ctx_t iouring_ctx_t;
