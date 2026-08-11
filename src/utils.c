@@ -102,9 +102,14 @@ uint64_t get_timestamp_us(void) {
     return (uint64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
 }
 
-const char* addr_to_string(const struct sockaddr *addr) {
+const char* addr_to_string(const struct sockaddr_storage *addrs, log_level_t log_level) {
     static char buf[128];  // Static buffer for address string
-    
+
+    // skip if not at the desired log level
+    if (!at_log_level(log_level))
+        return "";
+
+    const struct sockaddr *addr = (const struct sockaddr *)addrs;
     if (addr->sa_family == AF_INET) {
         struct sockaddr_in *sin = (struct sockaddr_in *)addr;
         char ip[INET_ADDRSTRLEN];
@@ -121,6 +126,7 @@ const char* addr_to_string(const struct sockaddr *addr) {
     
     return buf;
 }
+
 
 uint32_t addr_hash(const struct sockaddr *addr, size_t bucket_count) {
     uint32_t hash = 0;

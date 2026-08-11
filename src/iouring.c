@@ -225,7 +225,8 @@ iouring_ctx_t* iouring_init(iouring_config_t *c) {
     struct io_uring_params p;
     memset(&p, 0, sizeof(struct io_uring_params));
     // TOFO: try  IORING_SETUP_COOP_TASKRUN
-    p.flags = IORING_SETUP_CQSIZE;
+    p.flags = IORING_SETUP_CQSIZE | IORING_SETUP_SQPOLL;
+    p.sq_thread_idle = 2000; // kernel thread sleeps after 2s of inactivity
     p.cq_entries = c->cq_depth;
 
     int ret = io_uring_queue_init_params(ctx->config->sq_depth, &ctx->ring, &p);
@@ -540,7 +541,7 @@ int iouring_submit_udp_recv(iouring_ctx_t *ctx, io_op_t *op) {
 }
 
 int iouring_submit_udp_send(iouring_ctx_t *ctx, io_op_t *op,
-                            const struct sockaddr *addr, socklen_t addr_len,
+                            struct sockaddr_storage *addr, socklen_t addr_len,
                             const uint8_t *data, int len) {
     if (!ctx || !op || !addr || len <= 0 || op->fd < 0) {
         log_error("Invalid parameters for UDP send");
@@ -569,7 +570,8 @@ int iouring_submit_udp_send(iouring_ctx_t *ctx, io_op_t *op,
 
     // Setup msghdr for sendmsg
     //memset(&op->msg, 0, sizeof(op->msg));
-    memcpy(op->addr, addr, addr_len);
+    //memcpy(op->addr, addr, addr_len);
+    op->addr = addr;
     op->addr_len = addr_len;
 
     op->iov.iov_base = op->buffer;
@@ -595,7 +597,7 @@ int iouring_submit_udp_send(iouring_ctx_t *ctx, io_op_t *op,
     }
 
     log_debug("Submitted UDP send operation on fd=%d: %zu bytes to %s",
-              op->fd, len, addr_to_string(addr));
+              op->fd, len, addr_to_string(addr, LOG_DEBUG));
 
     return 0;
 }

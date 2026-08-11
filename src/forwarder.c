@@ -137,12 +137,11 @@ void forwarder_destroy(forwarder_ctx_t *ctx) {
 static int forward_udp_packet(forwarder_ctx_t *ctx, io_op_t *op) {
 
     int packet_len = op->data_len;
-    struct sockaddr *src_addr = (struct sockaddr *)op->addr;
 
     // Determine which connection based solely on which socket received the packet
     int from_inbound_socket = (op->fd == ctx->inbound->udp_fd);
     log_debug("Received %d bytes from %s on %s socket (fd=%d)",
-              packet_len, addr_to_string(src_addr),
+              packet_len, addr_to_string(op->addr, LOG_DEBUG),
               from_inbound_socket ? "inbound" : "outbound",
               op->fd);
 

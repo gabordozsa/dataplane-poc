@@ -48,7 +48,7 @@ connection_t* create_connection(conn_role_t role,
              free(conn);
             return NULL;
         }
-        log_info("Resolved CLIENT address to %s", addr_to_string((const struct sockaddr *)&conn->addr));
+        log_info("Resolved CLIENT address to %s", addr_to_string(&conn->addr, LOG_INFO));
     }
 
     // create UDP socket
@@ -186,7 +186,7 @@ int do_dtls_handshake(iouring_ctx_t *uring_ctx, connection_t *conn) {
             io_op_t *new_op = io_op_alloc(uring_ctx, OP_TYPE_UDP_SEND, conn->udp_fd, false/*is_multi*/);
             assert(new_op);
             int ret = iouring_submit_udp_send(uring_ctx, new_op,
-                                              (struct sockaddr *)&conn->addr,
+                                              &conn->addr,
                                               conn->addr_len, buffer, read);
             if (ret < 0) {
                 return -1;
@@ -227,7 +227,8 @@ int do_dtls_handshake(iouring_ctx_t *uring_ctx, connection_t *conn) {
                     memcpy(&conn->addr, op->addr, op->addr_len);
                     conn->addr_len = op->addr_len;
                     log_debug("Connection address is set to %s (len %d fd %d)",
-                               addr_to_string((struct sockaddr *)&conn->addr), conn->addr_len, conn->udp_fd);
+                              addr_to_string(&conn->addr, LOG_DEBUG), 
+                              conn->addr_len, conn->udp_fd);
                 }
 
                 ret = BIO_write(conn->rbio, op->buffer, op->data_len);

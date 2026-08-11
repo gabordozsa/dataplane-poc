@@ -84,7 +84,8 @@ int run_zero_udp2tun(iouring_ctx_t *udp2tun_ctx, connection_t *conn, int tun_fd,
                 memcpy(&conn->addr, op->addr, op->addr_len);
                 conn->addr_len = op->addr_len;
                 log_debug("Connection address is set to %s (len %d fd %d)",
-                            addr_to_string((struct sockaddr *)&conn->addr), conn->addr_len, conn->udp_fd);
+                            addr_to_string(&conn->addr, LOG_DEBUG),
+                            conn->addr_len, conn->udp_fd);
             }
             ret = udp_to_tun(tun_fd, op, udp2tun_ctx);
             if (ret < 0)

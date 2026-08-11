@@ -182,7 +182,7 @@ int iouring_submit_udp_recv(iouring_ctx_t *ctx, io_op_t *op);
  * @return 0 on success, -1 on failure
  */
 int iouring_submit_udp_send(iouring_ctx_t *ctx, io_op_t *op,
-                            const struct sockaddr *addr, socklen_t addr_len,
+                            struct sockaddr_storage *addr, socklen_t addr_len,
                             const uint8_t *data, int len);
 
 /**

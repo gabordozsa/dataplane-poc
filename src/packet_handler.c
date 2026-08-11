@@ -157,7 +157,7 @@ int dtls_encrypt_and_send_udp(connection_t *conn,
     }
 
     int ret = iouring_submit_udp_send(uring_ctx, op,
-                                      (struct sockaddr *)&conn->addr, conn->addr_len,
+                                      &conn->addr, conn->addr_len,
                                       NULL /*data is already in place*/, op->data_len);
     if (ret < 0) {
         io_op_free(uring_ctx, &op);
@@ -212,7 +212,7 @@ int tun_to_udp(connection_t *conn,
     }
 
     int ret = iouring_submit_udp_send(tun2udp_ctx, send_op,
-                                      (struct sockaddr *)&conn->addr, conn->addr_len,
+                                      &conn->addr, conn->addr_len,
                                       NULL /*data is already in place*/, send_op->data_len);
     if (ret < 0) {
         io_op_free(tun2udp_ctx, &send_op);

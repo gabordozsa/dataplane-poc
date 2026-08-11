@@ -18,8 +18,8 @@
 
 // TUN uring config params
 static iouring_config_t tun_iouring_params = {
-    .sq_depth           = 4,         // submissiom queue depth
-    .cq_depth           = 512,       // completion queue depth
+    .sq_depth           = 2048,         // submissiom queue depth
+    .cq_depth           = 2048,       // completion queue depth
     .br_n_bufs          = 2048,      // number of provuded buffers in buffer ring
     .br_gid             = 1,         // group ID of buffer ring
     .n_io_ops           = 4096,      // number of user context structs for submisson requests
@@ -28,7 +28,7 @@ static iouring_config_t tun_iouring_params = {
 
 // UDP uring config params
 static iouring_config_t udp_iouring_params = {
-    .sq_depth           = 4,      // submissiom queue depth
+    .sq_depth           = 1024,      // submissiom queue depth
     .cq_depth           = 1024,   // completion queue depth
     .br_n_bufs          = 2048,   // number of provuded buffers in buffer ring
     .br_gid             = 2,      // group ID of buffer ring
