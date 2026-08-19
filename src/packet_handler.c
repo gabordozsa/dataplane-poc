@@ -206,6 +206,11 @@ int tun_to_udp(connection_t *conn,
         print_ip_packet_info(tun_read_op->buffer, tun_read_op->data_len, "TUN -> UDP");
     }
 
+    if (conn->addr_len == 0) {
+        print_ip_packet_info(tun_read_op->buffer, tun_read_op->data_len, "Dropping TUN packet because no UDP conn infor yet");
+        return 0;
+    }
+
     io_op_t *send_op = io_op_alloc_buf(tun2udp_ctx, OP_TYPE_UDP_SEND, conn->udp_fd, false /*is_multi*/, tun_read_op);
     if (!send_op) {
         return -1;
